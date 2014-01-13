@@ -46,7 +46,8 @@ public class RestGetSettingsAction extends BaseRestHandler {
         super(settings, client);
         controller.registerHandler(GET, "/_settings", this);
         controller.registerHandler(GET, "/{index}/_settings", this);
-        controller.registerHandler(GET, "/{index}/{prefix}/_settings", this);
+        controller.registerHandler(GET, "/{index}/_settings/{name}", this);
+        controller.registerHandler(GET, "/{index}/_setting/{name}", this);
     }
 
     @Override
@@ -54,7 +55,7 @@ public class RestGetSettingsAction extends BaseRestHandler {
         GetSettingsRequest getSettingsRequest = new GetSettingsRequest()
                 .indices(Strings.splitStringByCommaToArray(request.param("index")))
                 .indicesOptions(IndicesOptions.fromRequest(request, IndicesOptions.strict()))
-                .prefix(request.param("prefix"));
+                .names(Strings.splitStringByCommaToArray(request.param("name")));
 
         client.admin().indices().getSettings(getSettingsRequest, new ActionListener<GetSettingsResponse>() {
 

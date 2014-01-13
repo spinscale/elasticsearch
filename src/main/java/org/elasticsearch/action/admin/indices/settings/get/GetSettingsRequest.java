@@ -34,7 +34,7 @@ public class GetSettingsRequest extends MasterNodeOperationRequest<GetSettingsRe
 
     private String[] indices = Strings.EMPTY_ARRAY;
     private IndicesOptions indicesOptions = IndicesOptions.fromOptions(false, true, true, true);
-    private String prefix;
+    private String[] names = Strings.EMPTY_ARRAY;
 
     public GetSettingsRequest indices(String... indices) {
         this.indices = indices;
@@ -54,12 +54,12 @@ public class GetSettingsRequest extends MasterNodeOperationRequest<GetSettingsRe
         return indicesOptions;
     }
 
-    public String prefix() {
-        return prefix;
+    public String[] names() {
+        return names;
     }
 
-    public GetSettingsRequest prefix(String prefix) {
-        this.prefix = prefix;
+    public GetSettingsRequest names(String ... prefix) {
+        this.names = prefix;
         return this;
     }
 
@@ -73,7 +73,7 @@ public class GetSettingsRequest extends MasterNodeOperationRequest<GetSettingsRe
         super.readFrom(in);
         indices = in.readStringArray();
         indicesOptions = IndicesOptions.readIndicesOptions(in);
-        prefix = in.readOptionalString();
+        names = in.readStringArray();
     }
 
     @Override
@@ -81,6 +81,6 @@ public class GetSettingsRequest extends MasterNodeOperationRequest<GetSettingsRe
         super.writeTo(out);
         out.writeStringArray(indices);
         indicesOptions.writeIndicesOptions(out);
-        out.writeOptionalString(prefix);
+        out.writeStringArray(names);
     }
 }
