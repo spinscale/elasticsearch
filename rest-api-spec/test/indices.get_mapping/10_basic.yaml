@@ -10,6 +10,16 @@ setup:
                     text:
                       type:     string
                       analyzer: whitespace
+  - do:
+        indices.create:
+          index: test_idx
+          body:
+              mappings:
+                test_type:
+                  properties:
+                    text:
+                      type:     string
+                      analyzer: keyword
 
 ---
 "Get index mapping":
@@ -30,3 +40,57 @@ setup:
 
   - match: {test_index.test_type.properties.text.type:     string}
   - match: {test_index.test_type.properties.text.analyzer: whitespace}
+
+---
+"Get mappings using _all":
+
+  - do:
+      indices.get_mapping:
+        index: _all
+        # no _all type exists... go with *
+        type: '*'
+
+  - match: {test_index.test_type.properties.text.type:     string}
+  - match: {test_index.test_type.properties.text.analyzer: whitespace}
+  - match: {test_idx.test_type.properties.text.type:       string}
+  - match: {test_idx.test_type.properties.text.analyzer:   keyword}
+
+---
+"Get mappings using *":
+
+  - do:
+      indices.get_mapping:
+        index: '*'
+        type:  '*'
+
+  - match: {test_index.test_type.properties.text.type:     string}
+  - match: {test_index.test_type.properties.text.analyzer: whitespace}
+  - match: {test_idx.test_type.properties.text.type:       string}
+  - match: {test_idx.test_type.properties.text.analyzer:   keyword}
+
+---
+"Get mappings using prefix":
+
+  - do:
+      indices.get_mapping:
+        index: test_*
+        type: test_*
+
+  - match: {test_index.test_type.properties.text.type:     string}
+  - match: {test_index.test_type.properties.text.analyzer: whitespace}
+  - match: {test_idx.test_type.properties.text.type:       string}
+  - match: {test_idx.test_type.properties.text.analyzer:   keyword}
+
+---
+"Get mappings using comma separated indices":
+
+  - do:
+      indices.get_mapping:
+        index: test_index,test_idx
+        type: test_type
+
+  - match: {test_index.test_type.properties.text.type:     string}
+  - match: {test_index.test_type.properties.text.analyzer: whitespace}
+  - match: {test_idx.test_type.properties.text.type:       string}
+  - match: {test_idx.test_type.properties.text.analyzer:   keyword}
+
