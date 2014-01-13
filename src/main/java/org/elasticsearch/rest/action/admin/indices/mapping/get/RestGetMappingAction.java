@@ -76,7 +76,7 @@ public class RestGetMappingAction extends BaseRestHandler {
                     ImmutableOpenMap<String, ImmutableOpenMap<String, MappingMetaData>> mappingsByIndex = response.getMappings();
                     if (mappingsByIndex.isEmpty()) {
                         if (indices.length != 0 && types.length != 0) {
-                            channel.sendResponse(new XContentThrowableRestResponse(request, new TypeMissingException(new Index(indices[0]), types[0])));
+                            channel.sendResponse(new XContentRestResponse(request, OK, RestXContentBuilder.emptyBuilder(request)));
                         } else if (indices.length != 0) {
                             channel.sendResponse(new XContentThrowableRestResponse(request, new IndexMissingException(new Index(indices[0]))));
                         } else if (types.length != 0) {
@@ -89,9 +89,6 @@ public class RestGetMappingAction extends BaseRestHandler {
                     }
 
                     for (ObjectObjectCursor<String, ImmutableOpenMap<String, MappingMetaData>> indexEntry : mappingsByIndex) {
-                        if (indexEntry.value.size() == 0) {
-                            continue;
-                        }
                         builder.startObject(indexEntry.key, XContentBuilder.FieldCaseConversion.NONE);
                         for (ObjectObjectCursor<String, MappingMetaData> typeEntry : indexEntry.value) {
                             builder.field(typeEntry.key);
