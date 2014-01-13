@@ -62,19 +62,21 @@ public class RestGetSettingsAction extends BaseRestHandler {
             @Override
             public void onResponse(GetSettingsResponse getSettingsResponse) {
                 try {
-                    boolean foundAny = false;
                     XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
                     builder.startObject();
                     for (ObjectObjectCursor<String, Settings> cursor : getSettingsResponse.getIndexToSettings()) {
+                        // no settings, jump over it to shorten the response data
+                        if (cursor.value.getAsMap().size() == 0) {
+                            continue;
+                        }
                         builder.startObject(cursor.key, XContentBuilder.FieldCaseConversion.NONE);
-                        foundAny = true;
                         builder.startObject(Fields.SETTINGS);
                         cursor.value.toXContent(builder, request);
                         builder.endObject();
                         builder.endObject();
                     }
                     builder.endObject();
-                    channel.sendResponse(new XContentRestResponse(request, foundAny ? OK : NOT_FOUND, builder));
+                    channel.sendResponse(new XContentRestResponse(request, OK, builder));
                 } catch (IOException e) {
                     onFailure(e);
                 }

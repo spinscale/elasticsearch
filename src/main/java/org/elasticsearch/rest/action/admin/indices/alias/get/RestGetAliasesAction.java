@@ -68,7 +68,11 @@ public class RestGetAliasesAction extends BaseRestHandler {
             public void onResponse(GetAliasesResponse response) {
                 try {
                     XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
-                    if (response.getAliases().isEmpty()) {
+                    // empty body, if indices were specified but no aliases were
+                    if (indices.length > 0 && response.getAliases().isEmpty()) {
+                        channel.sendResponse(new XContentRestResponse(request, OK, RestXContentBuilder.emptyBuilder(request)));
+                        return;
+                    } else if (response.getAliases().isEmpty()) {
                         String message = String.format(Locale.ROOT, "alias [%s] missing", toNamesString(getAliasesRequest.aliases()));
                         builder.startObject()
                                 .field("error", message)

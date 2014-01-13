@@ -94,3 +94,33 @@ setup:
   - match: {test_idx.test_type.properties.text.type:       string}
   - match: {test_idx.test_type.properties.text.analyzer:   keyword}
 
+---
+"Getting a non-existent mapping on an existing index should return an empty body":
+
+  - do:
+      indices.get_mapping:
+        index: test_index
+        type: non-existent
+
+# match: {} does not work, so I just make sure the response is empty and not a 404
+  - is_false: test_index
+
+---
+"Getting an existent and non-existent mapping type should return the existing type and no data about the non-existent type":
+
+  - do:
+      indices.get_mapping:
+        index: test_index
+        type: test_type,non-existent
+
+  - match: {test_index.test_type.properties.text.type:     string}
+  - is_false: test_index.non-existent
+
+---
+"Getting mapping on an non-existent index should return 404":
+
+  - do:
+      catch: missing
+      indices.get_mapping:
+        index: non-existent
+        type: whatever

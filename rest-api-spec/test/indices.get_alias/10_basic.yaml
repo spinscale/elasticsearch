@@ -94,3 +94,33 @@ setup:
   - match: {test_index.aliases.test_alias: {}}
   - match: {test_index.aliases.test_blias: {}}
   - match: {test_index_2.aliases.test_alias_2: {}}
+
+---
+"Getting a non-existent alias on an existing index should return an empty body":
+
+  - do:
+      indices.get_alias:
+        index: test_index
+        name: non-existent
+
+  - match: { '': {}}
+
+---
+"Getting an existent and non-existent alias should return the existent and no data about the non-existent alias":
+
+  - do:
+      indices.get_alias:
+        index: test_index
+        name: test_alias,non-existent
+
+  - match: {test_index.aliases.test_alias: {}}
+  - is_false: test_index.alias.non-existent
+
+---
+"Getting warmer on an non-existent index should return 404":
+
+  - do:
+      catch: missing
+      indices.get_alias:
+        index: non-existent
+        name: foo

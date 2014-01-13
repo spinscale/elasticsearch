@@ -368,9 +368,8 @@ public class MetaData implements Iterable<IndexMetaData> {
                         filteredMappings.put(cursor.key, cursor.value);
                     }
                 }
-                if (!filteredMappings.isEmpty()) {
-                    indexMapBuilder.put(index, filteredMappings.build());
-                }
+                // returning empty mappings help to differentiate between non-existing and indices without mapping for this type
+                indexMapBuilder.put(index, filteredMappings.build());
             }
         }
         return indexMapBuilder.build();

@@ -94,3 +94,33 @@ setup:
   - is_false: test-index-2.settings.index.number_of_shards
   - match: { test-index-2.settings.index.refresh_interval: "10m" }
 
+---
+"Getting a non-existent setting on an existing index should return an empty body":
+
+  - do:
+      indices.get_settings:
+        index: test-index
+        name: non-existent
+
+  - match: { '': {}}
+
+---
+"Getting an existent and non-existent setting should return the existent and no data about the non-existing setting":
+
+  - do:
+      indices.get_settings:
+        index: test-index
+        name: index.number_of_replicas,non-existent
+
+  - match: { test-index.settings.index.number_of_replicas: "3" }
+  - is_false: test-index.settings.non-existent
+
+---
+"Getting setting on an non-existent index should return 404":
+
+  - do:
+      catch: missing
+      indices.get_settings:
+        index: non-existent
+        name: foo
+

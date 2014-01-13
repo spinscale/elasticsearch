@@ -13,12 +13,6 @@ setup:
         wait_for_status: yellow
 
   - do:
-      catch: missing
-      indices.get_warmer:
-        index: test_index
-        name: test_warmer
-
-  - do:
       indices.put_warmer:
         index: test_idx
         name: test_warmer2
@@ -49,10 +43,11 @@ setup:
         name: test_warmer
 
   - do:
-      catch: missing
       indices.get_warmer:
         index: test_index
         name: test_warmer
+# match: {} does not work, so I just make sure the response is empty and not a 404
+  - is_false: test_index
 
 ---
 "Getting warmers for several indices should work using *":
@@ -97,4 +92,34 @@ setup:
 
   - match: {test_index.warmers.test_warmer.source.query.match_all: {}}
   - match: {test_idx.warmers.test_warmer2.source.query.match_all: {}}
+
+---
+"Getting a non-existent warmer on an existing index should return an empty body":
+
+  - do:
+      indices.get_warmer:
+        index: test_index
+        name: non-existent
+
+  - match: { '': {}}
+
+---
+"Getting an existent and non-existent warmer should return the existent and no data about the non-existent warmer":
+  
+  - do:
+      indices.get_warmer:
+        index: test_index
+        name: test_warmer,non-existent
+
+  - match: {test_index.warmers.test_warmer.source.query.match_all: {}}
+  - is_false: test_index.warmers.non-existent
+
+--- 
+"Getting warmer on an non-existent index should return 404":
+
+  - do:
+      catch: missing
+      indices.get_warmer:
+        index: non-existent
+        name: foo
 

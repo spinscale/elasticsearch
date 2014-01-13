@@ -71,7 +71,7 @@ public class RestGetWarmerAction extends BaseRestHandler {
             public void onResponse(GetWarmersResponse response) {
                 try {
                     if (indices.length > 0 && response.warmers().isEmpty()) {
-                        channel.sendResponse(new XContentThrowableRestResponse(request, new IndexMissingException(new Index(indices[0]))));
+                        channel.sendResponse(new XContentRestResponse(request, OK, RestXContentBuilder.emptyBuilder(request)));
                         return;
                     }
 
