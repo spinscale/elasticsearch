@@ -29,6 +29,7 @@ import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.metadata.MetaData;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.inject.Inject;
+import org.elasticsearch.common.regex.Regex;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
@@ -50,11 +51,13 @@ public class RestGetIndicesAliasesAction extends BaseRestHandler {
         super(settings, client);
         controller.registerHandler(GET, "/_aliases", this);
         controller.registerHandler(GET, "/{index}/_aliases", this);
+        controller.registerHandler(GET, "/{index}/_aliases/{name}", this);
     }
 
     @Override
     public void handleRequest(final RestRequest request, final RestChannel channel) {
         final String[] indices = Strings.splitStringByCommaToArray(request.param("index"));
+        final String[] aliasFilter = Strings.splitStringByCommaToArray(request.param("name"));
 
         ClusterStateRequest clusterStateRequest = Requests.clusterStateRequest()
                 .routingTable(false)
@@ -76,6 +79,9 @@ public class RestGetIndicesAliasesAction extends BaseRestHandler {
 
                         builder.startObject("aliases");
                         for (ObjectCursor<AliasMetaData> cursor : indexMetaData.aliases().values()) {
+                            if (!isAliasIncluded(cursor.value.alias(), aliasFilter)) {
+                                continue;
+                            }
                             AliasMetaData.Builder.toXContent(cursor.value, builder, ToXContent.EMPTY_PARAMS);
                         }
                         builder.endObject();
@@ -100,5 +106,14 @@ public class RestGetIndicesAliasesAction extends BaseRestHandler {
                 }
             }
         });
+    }
+
+    private boolean isAliasIncluded(String alias, String[] aliasFilters) {
+        if (aliasFilters.length == 0 ||
+            (aliasFilters.length == 1 && ("_all".equals(aliasFilters[0]) || "*".equals(aliasFilters[0])))) {
+            return true;
+        }
+
+        return Regex.simpleMatch(aliasFilters, alias);
     }
 }

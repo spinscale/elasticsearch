@@ -1,0 +1,97 @@
+---
+setup:
+  - do:
+      indices.create:
+        index: test_index
+
+  - do:
+      indices.create:
+        index: test_index_2
+
+  - do:
+      cluster.health:
+        wait_for_status: yellow
+
+  - do:
+      indices.put_alias:
+        index: test_index
+        name: test_alias
+
+  - do:
+      indices.put_alias:
+        index: test_index
+        name: test_blias_2
+
+  - do:
+      indices.put_alias:
+        index: test_index_2
+        name: test_alias_3
+
+---
+"Get /_aliases":
+
+  - do:
+      indices.get_aliases: {}
+
+  - match: { test_index.aliases.test_alias: {} }
+  - match: { test_index.aliases.test_blias_2: {} }
+  - match: { test_index_2.aliases.test_alias_3: {} }
+
+---
+"Get /{index}/_aliases":
+
+  - do:
+      indices.get_aliases:
+        index: test_index
+
+  - match: { test_index.aliases.test_alias: {} }
+  - match: { test_index.aliases.test_blias_2: {} }
+
+---
+"Get /*/_aliases/*":
+
+  - do:
+      indices.get_aliases:
+        index: '*'
+        name: '*'
+
+  - match: { test_index.aliases.test_alias: {} }
+  - match: { test_index.aliases.test_blias_2: {} }
+  - match: { test_index_2.aliases.test_alias_3: {} }
+
+---
+"Get /_all/_aliases/_all":
+
+  - do:
+      indices.get_aliases:
+        index: '_all'
+        name: '_all'
+
+  - match: { test_index.aliases.test_alias: {} }
+  - match: { test_index.aliases.test_blias_2: {} }
+  - match: { test_index_2.aliases.test_alias_3: {} }
+
+---
+"Get /test_*/_aliases/test_a*":
+
+  - do:
+      indices.get_aliases:
+        index: test_*
+        name: test_a*
+
+  - match: { test_index.aliases.test_alias: {} }
+  - is_false: test_index.aliases.test_blias_2
+  - match: { test_index_2.aliases.test_alias_3: {} }
+
+---
+"Get /test_index,test_index_2/_aliases/test_alias,test_blias_2":
+
+  - do:
+      indices.get_aliases:
+        index: test_index,test_index_2
+        name: test_alias,test_blias_2
+
+  - match: { test_index.aliases.test_alias: {} }
+  - match: { test_index.aliases.test_blias_2: {} }
+  - is_false: test_index_2.aliases.test_alias_3
+

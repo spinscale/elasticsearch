@@ -1,0 +1,96 @@
+---
+setup:
+
+  - do:
+      indices.create:
+        index: test_index
+
+  - do:
+      indices.create:
+        index: test_index_2
+
+  - do:
+      indices.put_alias:
+        index: test_index
+        name: test_alias
+
+  - do:
+      indices.put_alias:
+        index: test_index
+        name: test_blias
+
+  - do:
+      indices.put_alias:
+        index: test_index_2
+        name: test_alias_2
+
+
+---
+"Test that getting all aliases works via /{index}/_alias/":
+  
+  - do:
+      indices.get_alias:
+        index: test_index
+  
+  - match: {test_index.aliases.test_alias: {}}
+  - match: {test_index.aliases.test_blias: {}}
+  - is_false: test_index_2.aliases.test_alias_2
+
+---
+"Test that getting specific alias works via /{index}/_alias/{name}":
+  
+  - do:
+      indices.get_alias:
+        index: test_index
+  
+  - match: {test_index.aliases.test_alias: {}}
+  - match: {test_index.aliases.test_blias: {}}
+  - is_false: test_index_2.aliases.test_alias_2
+
+---
+"Test that getting aliases works using /_all/_alias/_all":
+  
+  - do:
+      indices.get_alias:
+        index: _all
+        type: _all
+  
+  - match: {test_index.aliases.test_alias: {}}
+  - match: {test_index.aliases.test_blias: {}}
+  - match: {test_index_2.aliases.test_alias_2: {}}
+
+---
+"Test that getting aliases works using /*/_alias/*":
+  
+  - do:
+      indices.get_alias:
+        index: '*'
+        type: '*'
+  
+  - match: {test_index.aliases.test_alias: {}}
+  - match: {test_index.aliases.test_blias: {}}
+  - match: {test_index_2.aliases.test_alias_2: {}}
+
+---
+"Test that getting aliases works using /test_*/_alias/test_a*":
+  
+  - do:
+      indices.get_alias:
+        index: test_*
+        name:  test_a*
+  
+  - match: {test_index.aliases.test_alias: {}}
+  - match: {test_index_2.aliases.test_alias_2: {}}
+  - is_false: test_index.aliases.test_blias
+
+---
+"Test that getting aliases by comma separated names works /test_index,test_index_2/_alias/test_a*,test_blias":
+  
+  - do:
+      indices.get_alias:
+        index: test_index,test_index_2
+        name: test_a*,test_blias
+  
+  - match: {test_index.aliases.test_alias: {}}
+  - match: {test_index.aliases.test_blias: {}}
+  - match: {test_index_2.aliases.test_alias_2: {}}
