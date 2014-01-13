@@ -376,11 +376,18 @@ public class MetaData implements Iterable<IndexMetaData> {
         return indexMapBuilder.build();
     }
 
-    public ImmutableOpenMap<String, ImmutableList<IndexWarmersMetaData.Entry>> findWarmers(String[] concreteIndices, final String[] types, final String[] warmers) {
-        assert warmers != null;
+    public ImmutableOpenMap<String, ImmutableList<IndexWarmersMetaData.Entry>> findWarmers(String[] concreteIndices, final String[] types, final String[] uncheckedWarmers) {
+        assert uncheckedWarmers != null;
         assert concreteIndices != null;
         if (concreteIndices.length == 0) {
             return ImmutableOpenMap.of();
+        }
+        // special _all check to behave the same like not specifying anything
+        final String[] warmers;
+        if (uncheckedWarmers.length == 1 && "_all".equals(uncheckedWarmers[0])) {
+            warmers = Strings.EMPTY_ARRAY;
+        } else {
+            warmers = uncheckedWarmers;
         }
 
         ImmutableOpenMap.Builder<String, ImmutableList<IndexWarmersMetaData.Entry>> mapBuilder = ImmutableOpenMap.builder();
