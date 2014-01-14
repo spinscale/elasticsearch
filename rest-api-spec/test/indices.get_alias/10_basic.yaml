@@ -26,6 +26,16 @@ setup:
 
 
 ---
+"Test that getting all aliases works via /_alias/":
+  
+  - do:
+      indices.get_alias: {}
+  
+  - match: {test_index.aliases.test_alias: {}}
+  - match: {test_index.aliases.test_blias: {}}
+  - match: {test_index_2.aliases.test_alias_2 : {}}
+
+---
 "Test that getting all aliases works via /{index}/_alias/":
   
   - do:
