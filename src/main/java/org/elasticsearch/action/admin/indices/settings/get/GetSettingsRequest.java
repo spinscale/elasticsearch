@@ -20,6 +20,7 @@
 package org.elasticsearch.action.admin.indices.settings.get;
 
 import org.elasticsearch.action.ActionRequestValidationException;
+import org.elasticsearch.action.ValidateActions;
 import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.action.support.master.MasterNodeOperationRequest;
 import org.elasticsearch.common.Strings;
@@ -59,15 +60,17 @@ public class GetSettingsRequest extends MasterNodeOperationRequest<GetSettingsRe
     }
 
     public GetSettingsRequest names(String... names) {
-        if (names != null) {
-            this.names = names;
-        }
+        this.names = names;
         return this;
     }
 
     @Override
     public ActionRequestValidationException validate() {
-        return null;
+        ActionRequestValidationException validationException = null;
+        if (names == null) {
+            validationException = ValidateActions.addValidationError("names may not be null", validationException);
+        }
+        return validationException;
     }
 
     @Override
