@@ -31,6 +31,7 @@ import org.elasticsearch.common.collect.ImmutableOpenMap;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
+import org.elasticsearch.common.xcontent.XContentBuilderString;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.indices.IndexMissingException;
 import org.elasticsearch.indices.TypeMissingException;
@@ -90,10 +91,12 @@ public class RestGetMappingAction extends BaseRestHandler {
 
                     for (ObjectObjectCursor<String, ImmutableOpenMap<String, MappingMetaData>> indexEntry : mappingsByIndex) {
                         builder.startObject(indexEntry.key, XContentBuilder.FieldCaseConversion.NONE);
+                        builder.startObject(Fields.MAPPINGS);
                         for (ObjectObjectCursor<String, MappingMetaData> typeEntry : indexEntry.value) {
                             builder.field(typeEntry.key);
                             builder.map(typeEntry.value.sourceAsMap());
                         }
+                        builder.endObject();
                         builder.endObject();
                     }
 
@@ -113,5 +116,9 @@ public class RestGetMappingAction extends BaseRestHandler {
                 }
             }
         });
+    }
+
+    static class Fields {
+        static final XContentBuilderString MAPPINGS = new XContentBuilderString("mappings");
     }
 }

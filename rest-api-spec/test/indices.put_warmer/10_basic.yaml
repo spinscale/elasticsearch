@@ -46,8 +46,8 @@ setup:
       indices.get_warmer:
         index: test_index
         name: test_warmer
-# match: {} does not work, so I just make sure the response is empty and not a 404
-  - is_false: test_index
+  
+  - match: { '': {}}
 
 ---
 "Getting warmers for several indices should work using *":
