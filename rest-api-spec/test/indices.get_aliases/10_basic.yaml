@@ -31,11 +31,20 @@ setup:
 "Get /_aliases":
 
   - do:
+      indices.create:
+        index: test_index_without_aliases
+
+  - do:
+      cluster.health:
+        wait_for_status: yellow
+
+  - do:
       indices.get_aliases: {}
 
   - match: { test_index.aliases.test_alias: {} }
   - match: { test_index.aliases.test_blias_2: {} }
   - match: { test_index_2.aliases.test_alias_3: {} }
+  - match: { test_index_without_aliases.aliases: {} }
 
 ---
 "Get /{index}/_aliases":

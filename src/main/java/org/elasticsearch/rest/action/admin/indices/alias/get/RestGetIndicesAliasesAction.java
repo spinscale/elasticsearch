@@ -18,14 +18,18 @@
  */
 package org.elasticsearch.rest.action.admin.indices.alias.get;
 
-import com.carrotsearch.hppc.cursors.ObjectObjectCursor;
+import com.carrotsearch.hppc.cursors.ObjectCursor;
 import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.action.admin.indices.alias.get.GetAliasesRequest;
-import org.elasticsearch.action.admin.indices.alias.get.GetAliasesResponse;
+import org.elasticsearch.action.admin.cluster.state.ClusterStateRequest;
+import org.elasticsearch.action.admin.cluster.state.ClusterStateResponse;
 import org.elasticsearch.client.Client;
+import org.elasticsearch.client.Requests;
 import org.elasticsearch.cluster.metadata.AliasMetaData;
+import org.elasticsearch.cluster.metadata.IndexMetaData;
+import org.elasticsearch.cluster.metadata.MetaData;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.inject.Inject;
+import org.elasticsearch.common.regex.Regex;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
@@ -33,7 +37,6 @@ import org.elasticsearch.rest.*;
 import org.elasticsearch.rest.action.support.RestXContentBuilder;
 
 import java.io.IOException;
-import java.util.List;
 
 import static org.elasticsearch.common.Strings.isAllOrWildcard;
 import static org.elasticsearch.rest.RestRequest.Method.GET;
@@ -55,24 +58,34 @@ public class RestGetIndicesAliasesAction extends BaseRestHandler {
     @Override
     public void handleRequest(final RestRequest request, final RestChannel channel) {
         final String[] indices = Strings.splitStringByCommaToArray(request.param("index"));
-        final String[] aliasNamesFromParameter = Strings.splitStringByCommaToArray(request.param("name"));
-        final String[] aliases = isAllOrWildcard(aliasNamesFromParameter) ? Strings.EMPTY_ARRAY : aliasNamesFromParameter;
+        final String[] aliases = Strings.splitStringByCommaToArray(request.param("name"));
 
-        GetAliasesRequest aliasesRequest = new GetAliasesRequest().indices(indices).aliases(aliases).listenerThreaded(false);
-        client.admin().indices().getAliases(aliasesRequest, new ActionListener<GetAliasesResponse>() {
+        ClusterStateRequest clusterStateRequest = Requests.clusterStateRequest()
+                                .routingTable(false)
+                                .nodes(false)
+                                .indices(indices);
+
+        clusterStateRequest.listenerThreaded(false);
+
+        client.admin().cluster().state(clusterStateRequest, new ActionListener<ClusterStateResponse>() {
             @Override
-            public void onResponse(GetAliasesResponse getAliasesResponse) {
+            public void onResponse(ClusterStateResponse response) {
                 try {
+                    MetaData metaData = response.getState().metaData();
                     XContentBuilder builder = RestXContentBuilder.restContentBuilder(request);
                     builder.startObject();
 
-                    for (ObjectObjectCursor<String, List<AliasMetaData>> aliasCursor :  getAliasesResponse.getAliases()) {
-                        builder.startObject(aliasCursor.key, XContentBuilder.FieldCaseConversion.NONE);
+                    final boolean isAllAliasesRequested = isAllOrWildcard(aliases);
+                    for (IndexMetaData indexMetaData : metaData) {
+                        builder.startObject(indexMetaData.index(), XContentBuilder.FieldCaseConversion.NONE);
                         builder.startObject("aliases");
 
-                        for (AliasMetaData aliasMetaData : aliasCursor.value) {
-                            AliasMetaData.Builder.toXContent(aliasMetaData, builder, ToXContent.EMPTY_PARAMS);
+                        for (ObjectCursor<AliasMetaData> cursor : indexMetaData.aliases().values()) {
+                            if (isAllAliasesRequested || Regex.simpleMatch(aliases, cursor.value.alias())) {
+                                AliasMetaData.Builder.toXContent(cursor.value, builder, ToXContent.EMPTY_PARAMS);
+                            }
                         }
+
                         builder.endObject();
                         builder.endObject();
                     }
