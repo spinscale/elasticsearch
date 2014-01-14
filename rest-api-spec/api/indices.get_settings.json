@@ -4,7 +4,7 @@
     "methods": ["GET"],
     "url": {
       "path": "/_settings",
-      "paths": ["/_settings", "/{index}/_settings", "/{index}/_settings/{name}"],
+      "paths": ["/_settings", "/{index}/_settings", "/{index}/_settings/{name}", "/_settings/{name}"],
       "parts": {
         "index": {
           "type" : "list",

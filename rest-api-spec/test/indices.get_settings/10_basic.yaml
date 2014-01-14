@@ -65,6 +65,34 @@ setup:
   - match: { test-index-2.settings.index.refresh_interval: "10m" }
 
 ---
+"Test get indices settings without specifying an index and _all":
+
+  - do:
+      indices.get_settings:
+        name: _all
+
+  - match: { test-index.settings.index.number_of_replicas: "3" }
+  - match: { test-index.settings.index.number_of_shards: "2" }
+  - match: { test-index.settings.index.refresh_interval: "-1" }
+  - match: { test-index-2.settings.index.number_of_replicas: "1" }
+  - match: { test-index-2.settings.index.number_of_shards: "5" }
+  - match: { test-index-2.settings.index.refresh_interval: "10m" }
+
+---
+"Test get indices settings without specifying an index and specific index settings":
+
+  - do:
+      indices.get_settings:
+        name: index.number*
+
+  - match: { test-index.settings.index.number_of_replicas: "3" }
+  - match: { test-index.settings.index.number_of_shards: "2" }
+  - is_false: test-index.settings.index.refresh_interval
+  - match: { test-index-2.settings.index.number_of_replicas: "1" }
+  - match: { test-index-2.settings.index.number_of_shards: "5" }
+  - is_false: test-index-2.settings.index.refresh_interval
+
+---
 "Test get indices settings using prefixes":
 
   - do:
