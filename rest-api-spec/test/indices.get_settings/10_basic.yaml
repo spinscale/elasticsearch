@@ -67,24 +67,12 @@ setup:
  - is_false: test_2
 
 ---
-"Get /{index}/_settings/{short-name}":
-
- - do:
-    indices.get_settings:
-        index: test_1
-        name:  number_of_shards
-
- - match: { test_1.settings.index.number_of_shards: 5}
- - is_false: test_1.settings.index.number_of_replicas
- - is_false: test_2
-
----
 "Get /{index}/_settings/{name,name}":
 
  - do:
     indices.get_settings:
         index: test_1
-        name:  number_of_shards,number_of_replicas
+        name:  index.number_of_shards,index.number_of_replicas
 
  - match: { test_1.settings.index.number_of_shards: 5}
  - match: { test_1.settings.index.number_of_replicas: 1}
@@ -96,7 +84,7 @@ setup:
  - do:
     indices.get_settings:
         index: test_1
-        name:  'number_of_s*'
+        name:  'index.number_of_s*'
 
  - match: { test_1.settings.index.number_of_shards: 5}
  - is_false: test_1.settings.index.number_of_replicas
@@ -107,7 +95,7 @@ setup:
 
  - do:
     indices.get_settings:
-        name: number_of_shards
+        name: index.number_of_shards
 
  - match: { test_1.settings.index.number_of_shards: 5}
  - match: { test_2.settings.index.number_of_shards: 5}
@@ -120,7 +108,7 @@ setup:
  - do:
     indices.get_settings:
         index: _all
-        name: number_of_shards
+        name: index.number_of_shards
 
  - match: { test_1.settings.index.number_of_shards: 5}
  - match: { test_2.settings.index.number_of_shards: 5}
@@ -134,7 +122,7 @@ setup:
  - do:
     indices.get_settings:
         index: '*'
-        name: number_of_shards
+        name: index.number_of_shards
 
  - match: { test_1.settings.index.number_of_shards: 5}
  - match: { test_2.settings.index.number_of_shards: 5}
@@ -147,7 +135,7 @@ setup:
  - do:
     indices.get_settings:
         index: test_1
-        name: number_of_shards
+        name: index.number_of_shards
 
  - match: { test_1.settings.index.number_of_shards: 5}
  - is_false: test_1.settings.index.number_of_replicas
@@ -159,7 +147,7 @@ setup:
  - do:
     indices.get_settings:
         index: test_1,test_2
-        name: number_of_shards
+        name: index.number_of_shards
 
  - match: { test_1.settings.index.number_of_shards: 5}
  - match: { test_2.settings.index.number_of_shards: 5}
@@ -172,7 +160,7 @@ setup:
  - do:
     indices.get_settings:
         index: '*2'
-        name: number_of_shards
+        name: index.number_of_shards
 
  - match: { test_2.settings.index.number_of_shards: 5}
  - is_false: test_1
