@@ -57,8 +57,9 @@ public class RestGetAliasesAction extends BaseRestHandler {
     @Override
     public void handleRequest(final RestRequest request, final RestChannel channel) {
         String[] aliases = request.paramAsStringArray("name", Strings.EMPTY_ARRAY);
+        final String[] allAliases = Strings.isAllOrWildcard(aliases) ? Strings.EMPTY_ARRAY : aliases;
         final String[] indices = Strings.splitStringByCommaToArray(request.param("index"));
-        final GetAliasesRequest getAliasesRequest = new GetAliasesRequest(aliases);
+        final GetAliasesRequest getAliasesRequest = new GetAliasesRequest(allAliases);
         getAliasesRequest.indices(indices);
         getAliasesRequest.indicesOptions(IndicesOptions.fromRequest(request, getAliasesRequest.indicesOptions()));
 

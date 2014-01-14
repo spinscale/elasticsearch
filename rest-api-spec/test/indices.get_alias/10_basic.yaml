@@ -53,7 +53,7 @@ setup:
   - do:
       indices.get_alias:
         index: _all
-        type: _all
+        name: _all
   
   - match: {test_index.aliases.test_alias: {}}
   - match: {test_index.aliases.test_blias: {}}
@@ -65,7 +65,7 @@ setup:
   - do:
       indices.get_alias:
         index: '*'
-        type: '*'
+        name: '*'
   
   - match: {test_index.aliases.test_alias: {}}
   - match: {test_index.aliases.test_blias: {}}
