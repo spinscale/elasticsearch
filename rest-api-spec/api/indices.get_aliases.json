@@ -4,7 +4,7 @@
     "methods": ["GET"],
     "url": {
       "path": "/_aliases",
-      "paths": ["/_aliases", "/{index}/_aliases", "/{index}/_aliases/{name}" ],
+      "paths": ["/_aliases", "/{index}/_aliases", "/{index}/_aliases/{name}", "/_aliases/{name}" ],
       "parts": {
         "index": {
           "type" : "list",

@@ -53,6 +53,7 @@ public class RestGetIndicesAliasesAction extends BaseRestHandler {
         controller.registerHandler(GET, "/_aliases", this);
         controller.registerHandler(GET, "/{index}/_aliases", this);
         controller.registerHandler(GET, "/{index}/_aliases/{name}", this);
+        controller.registerHandler(GET, "/_aliases/{name}", this);
     }
 
     @Override

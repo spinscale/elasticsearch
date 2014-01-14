@@ -104,3 +104,13 @@ setup:
   - match: { test_index.aliases.test_blias_2: {} }
   - is_false: test_index_2.aliases.test_alias_3
 
+---
+"Get /_aliases/{name} should work":
+  
+  - do:
+      indices.get_aliases:
+        name: test_alias,test_blias_2
+
+  - match: { test_index.aliases.test_alias: {} }
+  - match: { test_index.aliases.test_blias_2: {} }
+  - is_false: test_index_2.aliases.test_alias_3
