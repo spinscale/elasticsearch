@@ -42,13 +42,22 @@ setup:
   - match: {test_index.mappings.test_type.properties.text.analyzer: whitespace}
 
 ---
+"Get type mapping using type only without index":
+
+  - do:
+      indices.get_mapping:
+        type: test_type
+
+  - match: {test_index.mappings.test_type.properties.text.type:     string}
+  - match: {test_index.mappings.test_type.properties.text.analyzer: whitespace}
+
+---
 "Get mappings using _all":
 
   - do:
       indices.get_mapping:
         index: _all
-        # no _all type exists... go with *
-        type: '*'
+        type: _all
 
   - match: {test_index.mappings.test_type.properties.text.type:     string}
   - match: {test_index.mappings.test_type.properties.text.analyzer: whitespace}

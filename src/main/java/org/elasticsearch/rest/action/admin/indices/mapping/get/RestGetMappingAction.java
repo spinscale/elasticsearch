@@ -56,12 +56,14 @@ public class RestGetMappingAction extends BaseRestHandler {
         controller.registerHandler(GET, "/{index}/{type}/_mapping", this);
         controller.registerHandler(GET, "/{index}/_mappings/{type}", this);
         controller.registerHandler(GET, "/{index}/_mapping/{type}", this);
+        controller.registerHandler(GET, "/_mapping/{type}", this);
     }
 
     @Override
     public void handleRequest(final RestRequest request, final RestChannel channel) {
         final String[] indices = Strings.splitStringByCommaToArray(request.param("index"));
-        final String[] types = Strings.splitStringByCommaToArray(request.param("type"));
+        final String[] paramTypes = request.paramAsStringArray("type", Strings.EMPTY_ARRAY);
+        final String[] types = Strings.isAllOrWildcard(paramTypes) ? Strings.EMPTY_ARRAY : paramTypes;
         boolean local = request.paramAsBooleanOptional("local", false);
         GetMappingsRequest getMappingsRequest = new GetMappingsRequest();
         getMappingsRequest.indices(indices).types(types).local(local);
