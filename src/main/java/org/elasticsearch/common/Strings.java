@@ -1571,7 +1571,8 @@ public class Strings {
      * which is usually used as everything
      */
     public static boolean isAllOrWildcard(String[] data) {
-        return data.length == 0 ||
+        return data == null ||
+               data.length == 0 ||
                data.length == 1 && ("_all".equals(data[0]) || "*".equals(data[0]));
     }
 
