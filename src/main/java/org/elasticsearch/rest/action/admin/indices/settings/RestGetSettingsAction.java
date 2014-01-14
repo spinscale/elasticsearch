@@ -53,12 +53,11 @@ public class RestGetSettingsAction extends BaseRestHandler {
 
     @Override
     public void handleRequest(final RestRequest request, final RestChannel channel) {
-        final String[] settingParams = request.paramAsStringArray("name", Strings.EMPTY_ARRAY);
-        final String[] settingNames = Strings.isAllOrWildcard(settingParams) ? Strings.EMPTY_ARRAY : settingParams;
+        final String[] names = request.paramAsStringArrayOrEmptyIfAll("name");
         GetSettingsRequest getSettingsRequest = new GetSettingsRequest()
                 .indices(Strings.splitStringByCommaToArray(request.param("index")))
                 .indicesOptions(IndicesOptions.fromRequest(request, IndicesOptions.strict()))
-                .names(settingNames);
+                .names(names);
 
         client.admin().indices().getSettings(getSettingsRequest, new ActionListener<GetSettingsResponse>() {
 
