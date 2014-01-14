@@ -82,6 +82,16 @@ setup:
   - match: {test_idx.warmers.test_warmer2.source.query.match_all: {}}
 
 ---
+"Getting all warmers without specifying index should work":
+
+  - do:
+      indices.get_warmer:
+        name: _all
+
+  - match: {test_index.warmers.test_warmer.source.query.match_all: {}}
+  - match: {test_idx.warmers.test_warmer2.source.query.match_all: {}}
+
+---
 "Getting warmers for several indices should work using prefix*":
 
   - do:

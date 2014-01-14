@@ -4,7 +4,7 @@
     "methods": ["GET"],
     "url": {
       "path": "/_warmer",
-      "paths": [ "/_warmer", "/{index}/_warmer", "/{index}/_warmer/{name}", "/{index}/{type}/_warmer/{name}"],
+      "paths": [ "/_warmer", "/{index}/_warmer", "/{index}/_warmer/{name}", "/_warmer/{name}", "/{index}/{type}/_warmer/{name}"],
       "parts": {
         "index": {
           "type" : "list",
