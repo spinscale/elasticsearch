@@ -58,8 +58,10 @@ public class GetSettingsRequest extends MasterNodeOperationRequest<GetSettingsRe
         return names;
     }
 
-    public GetSettingsRequest names(String ... prefix) {
-        this.names = prefix;
+    public GetSettingsRequest names(String... names) {
+        if (names != null) {
+            this.names = names;
+        }
         return this;
     }
 

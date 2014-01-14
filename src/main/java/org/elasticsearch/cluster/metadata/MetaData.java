@@ -382,13 +382,8 @@ public class MetaData implements Iterable<IndexMetaData> {
         if (concreteIndices.length == 0) {
             return ImmutableOpenMap.of();
         }
-        // special _all check to behave the same like not specifying anything
-        final String[] warmers;
-        if (uncheckedWarmers.length == 1 && "_all".equals(uncheckedWarmers[0])) {
-            warmers = Strings.EMPTY_ARRAY;
-        } else {
-            warmers = uncheckedWarmers;
-        }
+        // special _all check to behave the same like not specifying anything for the warmers (not for the indices)
+        final String[] warmers = Strings.isAllOrWildcard(uncheckedWarmers) ? Strings.EMPTY_ARRAY : uncheckedWarmers;
 
         ImmutableOpenMap.Builder<String, ImmutableList<IndexWarmersMetaData.Entry>> mapBuilder = ImmutableOpenMap.builder();
         Iterable<String> intersection = HppcMaps.intersection(ObjectOpenHashSet.from(concreteIndices), indices.keys());

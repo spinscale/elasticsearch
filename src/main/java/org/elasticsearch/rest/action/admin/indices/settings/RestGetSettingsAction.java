@@ -66,7 +66,7 @@ public class RestGetSettingsAction extends BaseRestHandler {
                     builder.startObject();
                     for (ObjectObjectCursor<String, Settings> cursor : getSettingsResponse.getIndexToSettings()) {
                         // no settings, jump over it to shorten the response data
-                        if (cursor.value.getAsMap().size() == 0) {
+                        if (cursor.value.getAsMap().isEmpty()) {
                             continue;
                         }
                         builder.startObject(cursor.key, XContentBuilder.FieldCaseConversion.NONE);
