@@ -8,7 +8,6 @@ template parameters.
 
 [source,js]
 ------------------------------------------
-GET _search
 {
     "query": {
         "template": {
@@ -27,7 +26,6 @@ Alternatively escaping the template works as well:
 
 [source,js]
 ------------------------------------------
-GET _search
 {
     "query": {
         "template": {
@@ -68,7 +66,6 @@ values:
 
 [source,js]
 ------------------------------------------
-GET _search
 {
     "query": {
         "template": {
@@ -79,17 +76,33 @@ GET _search
         }
     }
 }
-
 ------------------------------------------
 
 which is then turned into:
 
 [source,js]
 ------------------------------------------
-GET _search
 {
     "query": {
             "match_all": {}
+    }
+}
+------------------------------------------
+
+There is also a dedicated `template` endpoint, which allows you to specify the template query directly.
+You can use the `/_search/template` endpoint for that.
+
+[source,js]
+------------------------------------------
+{
+    "template" : {
+      "query": { "match" : { "{{myField}}" : "{{myValue}}" } },
+      "size" : {{mySize}}
+    },
+    "params" : {
+        "myField" : "foo",
+        "myValue" : "bar",
+        "mySize" : 5
     }
 }
 ------------------------------------------
