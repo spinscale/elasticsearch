@@ -19,31 +19,37 @@
 
 package org.elasticsearch.transport.netty;
 
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.handler.codec.ByteToMessageDecoder;
+import io.netty.handler.codec.TooLongFrameException;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.elasticsearch.monitor.jvm.JvmInfo;
 import org.elasticsearch.rest.RestStatus;
-import org.jboss.netty.buffer.ChannelBuffer;
-import org.jboss.netty.channel.Channel;
-import org.jboss.netty.channel.ChannelHandlerContext;
-import org.jboss.netty.handler.codec.frame.FrameDecoder;
-import org.jboss.netty.handler.codec.frame.TooLongFrameException;
 
 import java.io.IOException;
 import java.io.StreamCorruptedException;
+import java.util.List;
 
 /**
  */
-public class SizeHeaderFrameDecoder extends FrameDecoder {
+public class SizeHeaderFrameDecoder extends ByteToMessageDecoder {
 
     private static final long NINETY_PER_HEAP_SIZE = (long) (JvmInfo.jvmInfo().getMem().getHeapMax().bytes() * 0.9);
 
+    public SizeHeaderFrameDecoder() {
+        // TODO also teset with MERGE_CUMULATOR
+        setCumulator(COMPOSITE_CUMULATOR);
+    }
+
     @Override
-    protected Object decode(ChannelHandlerContext ctx, Channel channel, ChannelBuffer buffer) throws Exception {
+    protected void decode(ChannelHandlerContext ctx, ByteBuf buffer, List<Object> out) throws Exception {
         final int sizeHeaderLength = NettyHeader.MARKER_BYTES_SIZE + NettyHeader.MESSAGE_LENGTH_SIZE;
         if (buffer.readableBytes() < sizeHeaderLength) {
-            return null;
+            return;
         }
 
         int readerIndex = buffer.readerIndex();
@@ -74,7 +80,7 @@ public class SizeHeaderFrameDecoder extends FrameDecoder {
             // discard the messages we read and continue, this is achieved by skipping the bytes
             // and returning null
             buffer.skipBytes(sizeHeaderLength);
-            return null;
+            return;
         }
         if (dataLen <= 0) {
             throw new StreamCorruptedException("invalid data length: " + dataLen);
@@ -86,13 +92,17 @@ public class SizeHeaderFrameDecoder extends FrameDecoder {
         }
 
         if (buffer.readableBytes() < dataLen + sizeHeaderLength) {
-            return null;
+            // TODO requires buffer.skipBytes here as well?
+            return;
         }
-        buffer.skipBytes(sizeHeaderLength);
-        return buffer;
+
+        // TODO check if this is correct
+        ByteBuf message = Unpooled.unreleasableBuffer(buffer.readSlice(dataLen + sizeHeaderLength).retain());
+        message.skipBytes(2);
+        out.add(message);
     }
 
-    private boolean bufferStartsWith(ChannelBuffer buffer, int readerIndex, String method) {
+    private boolean bufferStartsWith(ByteBuf buffer, int readerIndex, String method) {
         char[] chars = method.toCharArray();
         for (int i = 0; i < chars.length; i++) {
             if (buffer.getByte(readerIndex + i) != chars[i]) {

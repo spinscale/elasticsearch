@@ -19,6 +19,10 @@
 
 package org.elasticsearch.transport.netty;
 
+import io.netty.buffer.ByteBuf;
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelFutureListener;
 import org.elasticsearch.Version;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.bytes.ReleasablePagedBytesReference;
@@ -34,10 +38,6 @@ import org.elasticsearch.transport.TransportResponse;
 import org.elasticsearch.transport.TransportResponseOptions;
 import org.elasticsearch.transport.TransportServiceAdapter;
 import org.elasticsearch.transport.support.TransportStatus;
-import org.jboss.netty.buffer.ChannelBuffer;
-import org.jboss.netty.channel.Channel;
-import org.jboss.netty.channel.ChannelFuture;
-import org.jboss.netty.channel.ChannelFutureListener;
 
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -106,7 +106,7 @@ public class NettyTransportChannel implements TransportChannel {
             stream.close();
 
             ReleasablePagedBytesReference bytes = bStream.bytes();
-            ChannelBuffer buffer = bytes.toChannelBuffer();
+            ByteBuf buffer = bytes.toByteBuf();
             NettyHeader.writeHeader(buffer, requestId, status, version);
             ChannelFuture future = channel.write(buffer);
             ReleaseChannelFutureListener listener = new ReleaseChannelFutureListener(bytes);
@@ -129,14 +129,14 @@ public class NettyTransportChannel implements TransportChannel {
         BytesStreamOutput stream = new BytesStreamOutput();
         stream.skip(NettyHeader.HEADER_SIZE);
         RemoteTransportException tx = new RemoteTransportException(
-            transport.nodeName(), transport.wrapAddress(channel.getLocalAddress()), action, error);
+            transport.nodeName(), transport.wrapAddress(channel.localAddress()), action, error);
         stream.writeThrowable(tx);
         byte status = 0;
         status = TransportStatus.setResponse(status);
         status = TransportStatus.setError(status);
 
         BytesReference bytes = stream.bytes();
-        ChannelBuffer buffer = bytes.toChannelBuffer();
+        ByteBuf buffer = bytes.toByteBuf();
         NettyHeader.writeHeader(buffer, requestId, status, version);
         ChannelFuture future = channel.write(buffer);
         ChannelFutureListener onResponseSentListener =

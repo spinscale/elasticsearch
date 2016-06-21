@@ -19,9 +19,10 @@
 
 package org.elasticsearch.http.netty.cors;
 
-import org.jboss.netty.handler.codec.http.DefaultHttpHeaders;
-import org.jboss.netty.handler.codec.http.HttpHeaders;
-import org.jboss.netty.handler.codec.http.HttpMethod;
+import io.netty.handler.codec.http.DefaultHttpHeaders;
+import io.netty.handler.codec.http.EmptyHttpHeaders;
+import io.netty.handler.codec.http.HttpHeaders;
+import io.netty.handler.codec.http.HttpMethod;
 
 import java.util.Collections;
 import java.util.LinkedHashSet;
@@ -36,6 +37,8 @@ import java.util.regex.Pattern;
  *
  * This class was lifted from the Netty project:
  *  https://github.com/netty/netty
+ *
+ * // TODO REFACTOR TO USE NETTY4 HANDLERS WHERE POSSIBLE
  */
 public final class CorsConfig {
 
@@ -183,7 +186,7 @@ public final class CorsConfig {
      */
     public HttpHeaders preflightResponseHeaders() {
         if (preflightHeaders.isEmpty()) {
-            return HttpHeaders.EMPTY_HEADERS;
+            return EmptyHttpHeaders.INSTANCE;
         }
         final HttpHeaders preflightHeaders = new DefaultHttpHeaders();
         for (Map.Entry<CharSequence, Callable<?>> entry : this.preflightHeaders.entrySet()) {

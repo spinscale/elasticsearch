@@ -19,6 +19,7 @@
 
 package org.elasticsearch.common.compress;
 
+import io.netty.buffer.ByteBuf;
 import org.apache.lucene.store.IndexInput;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.bytes.BytesReference;
@@ -28,7 +29,6 @@ import org.elasticsearch.common.io.stream.BytesStreamOutput;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentType;
-import org.jboss.netty.buffer.ChannelBuffer;
 
 import java.io.IOException;
 
@@ -97,7 +97,7 @@ public class CompressorFactory {
                (bytes.get(2) == 0 || bytes.get(2) == 1);
     }
 
-    public static Compressor compressor(ChannelBuffer buffer) {
+    public static Compressor compressor(ByteBuf buffer) {
         for (Compressor compressor : compressors) {
             if (compressor.isCompressed(buffer)) {
                 return compressor;

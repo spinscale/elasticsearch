@@ -19,7 +19,7 @@
 
 package org.elasticsearch.http.netty.cors;
 
-import org.jboss.netty.handler.codec.http.HttpMethod;
+import io.netty.handler.codec.http.HttpMethod;
 
 import java.util.Arrays;
 import java.util.Date;
@@ -37,6 +37,8 @@ import java.util.regex.Pattern;
  *
  * This class was lifted from the Netty project:
  *  https://github.com/netty/netty
+ *
+ * // TODO REFACTOR TO USE NETTY4 HANDLERS WHERE POSSIBLE
  */
 public final class CorsConfigBuilder {
 

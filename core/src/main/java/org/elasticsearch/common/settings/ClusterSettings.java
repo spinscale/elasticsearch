@@ -293,7 +293,6 @@ public final class ClusterSettings extends AbstractScopedSettings {
                     NettyTransport.NETTY_RECEIVE_PREDICTOR_MIN,
                     NettyTransport.NETTY_RECEIVE_PREDICTOR_MAX,
                     NetworkService.NETWORK_SERVER,
-                    NettyTransport.NETTY_BOSS_COUNT,
                     NettyTransport.TCP_NO_DELAY,
                     NettyTransport.TCP_KEEP_ALIVE,
                     NettyTransport.TCP_REUSE_ADDRESS,

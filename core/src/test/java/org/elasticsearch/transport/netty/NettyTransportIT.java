@@ -18,6 +18,10 @@
  */
 package org.elasticsearch.transport.netty;
 
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelHandler;
+import io.netty.channel.ChannelPipeline;
+import io.netty.channel.socket.SocketChannel;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.Version;
 import org.elasticsearch.action.admin.cluster.health.ClusterHealthResponse;
@@ -39,9 +43,6 @@ import org.elasticsearch.test.ESIntegTestCase.ClusterScope;
 import org.elasticsearch.test.ESIntegTestCase.Scope;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportSettings;
-import org.jboss.netty.channel.Channel;
-import org.jboss.netty.channel.ChannelPipeline;
-import org.jboss.netty.channel.ChannelPipelineFactory;
 
 import java.io.IOException;
 import java.util.Collection;
@@ -99,22 +100,24 @@ public class NettyTransportIT extends ESIntegTestCase {
         }
 
         @Override
-        public ChannelPipelineFactory configureServerChannelPipelineFactory(String name, Settings groupSettings) {
-            return new ErrorPipelineFactory(this, name, groupSettings);
+        public ChannelHandler configureServerChannelHandler(String name, Settings groupSettings) {
+            return new ErrorHandler(this, name, settings, groupSettings);
         }
 
-        private static class ErrorPipelineFactory extends ServerChannelPipelineFactory {
+        private static class ErrorHandler extends ServerChannelHandler {
 
             private final ESLogger logger;
 
-            public ErrorPipelineFactory(ExceptionThrowingNettyTransport nettyTransport, String name, Settings groupSettings) {
-                super(nettyTransport, name, groupSettings);
+            public ErrorHandler(ExceptionThrowingNettyTransport nettyTransport, String name, Settings settings, Settings groupSettings) {
+                super(nettyTransport, name, settings, groupSettings);
                 this.logger = nettyTransport.logger;
             }
 
             @Override
-            public ChannelPipeline getPipeline() throws Exception {
-                ChannelPipeline pipeline = super.getPipeline();
+            public void initChannel(SocketChannel ch) throws Exception {
+                super.initChannel(ch);
+                ChannelPipeline pipeline = ch.pipeline();
+
                 pipeline.replace("dispatcher", "dispatcher",
                     new MessageChannelHandler(nettyTransport, logger, TransportSettings.DEFAULT_PROFILE) {
 
@@ -135,7 +138,6 @@ public class NettyTransportIT extends ESIntegTestCase {
                         }
                     }
                 });
-                return pipeline;
             }
         }
     }

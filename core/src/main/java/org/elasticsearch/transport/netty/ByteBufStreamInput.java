@@ -19,29 +19,29 @@
 
 package org.elasticsearch.transport.netty;
 
+import io.netty.buffer.ByteBuf;
 import org.apache.lucene.util.BytesRef;
+import org.elasticsearch.common.bytes.ByteBufBytesReference;
 import org.elasticsearch.common.bytes.BytesReference;
-import org.elasticsearch.common.bytes.ChannelBufferBytesReference;
 import org.elasticsearch.common.io.stream.StreamInput;
-import org.jboss.netty.buffer.ChannelBuffer;
 
 import java.io.EOFException;
 import java.io.IOException;
 
 /**
- * A Netty {@link org.jboss.netty.buffer.ChannelBuffer} based {@link org.elasticsearch.common.io.stream.StreamInput}.
+ * A Netty {@link io.netty.buffer.ByteBuf} based {@link org.elasticsearch.common.io.stream.StreamInput}.
  */
-public class ChannelBufferStreamInput extends StreamInput {
+public class ByteBufStreamInput extends StreamInput {
 
-    private final ChannelBuffer buffer;
+    private final ByteBuf buffer;
     private final int startIndex;
     private final int endIndex;
 
-    public ChannelBufferStreamInput(ChannelBuffer buffer) {
+    public ByteBufStreamInput(ByteBuf buffer) {
         this(buffer, buffer.readableBytes());
     }
 
-    public ChannelBufferStreamInput(ChannelBuffer buffer, int length) {
+    public ByteBufStreamInput(ByteBuf buffer, int length) {
         if (length > buffer.readableBytes()) {
             throw new IndexOutOfBoundsException();
         }
@@ -53,7 +53,7 @@ public class ChannelBufferStreamInput extends StreamInput {
 
     @Override
     public BytesReference readBytesReference(int length) throws IOException {
-        ChannelBufferBytesReference ref = new ChannelBufferBytesReference(buffer.slice(buffer.readerIndex(), length));
+        ByteBufBytesReference ref = new ByteBufBytesReference(buffer.slice(buffer.readerIndex(), length), false);
         buffer.skipBytes(length);
         return ref;
     }

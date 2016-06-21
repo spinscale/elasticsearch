@@ -19,9 +19,9 @@
 
 package org.elasticsearch.transport.netty;
 
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import org.elasticsearch.Version;
-import org.jboss.netty.buffer.ChannelBuffer;
-import org.jboss.netty.buffer.ChannelBuffers;
 
 /**
  */
@@ -43,9 +43,9 @@ public class NettyHeader {
      * specifically in {@link org.elasticsearch.transport.netty.SizeHeaderFrameDecoder}.
      */
     public static final int PING_DATA_SIZE = -1;
-    private final static ChannelBuffer pingHeader;
+    private final static ByteBuf pingHeader;
     static {
-        pingHeader = ChannelBuffers.buffer(6);
+        pingHeader = Unpooled.buffer(6);
         pingHeader.writeByte('E');
         pingHeader.writeByte('S');
         pingHeader.writeInt(PING_DATA_SIZE);
@@ -54,11 +54,11 @@ public class NettyHeader {
     /**
      * A ping header is same as regular header, just with -1 for the size of the message.
      */
-    public static ChannelBuffer pingHeader() {
-        return pingHeader.duplicate();
+    public static ByteBuf pingHeader() {
+        return Unpooled.unreleasableBuffer(pingHeader);
     }
 
-    public static void writeHeader(ChannelBuffer buffer, long requestId, byte status, Version version) {
+    public static void writeHeader(ByteBuf buffer, long requestId, byte status, Version version) {
         int index = buffer.readerIndex();
         buffer.setByte(index, 'E');
         index += 1;

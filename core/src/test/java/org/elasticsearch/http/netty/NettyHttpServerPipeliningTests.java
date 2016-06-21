@@ -18,31 +18,27 @@
  */
 package org.elasticsearch.http.netty;
 
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
+import io.netty.channel.ChannelHandler;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.SimpleChannelInboundHandler;
+import io.netty.channel.socket.SocketChannel;
+import io.netty.handler.codec.http.DefaultFullHttpResponse;
+import io.netty.handler.codec.http.FullHttpRequest;
+import io.netty.handler.codec.http.FullHttpResponse;
+import io.netty.handler.codec.http.QueryStringDecoder;
 import org.elasticsearch.common.network.NetworkService;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.transport.InetSocketTransportAddress;
 import org.elasticsearch.common.util.MockBigArrays;
 import org.elasticsearch.common.util.concurrent.ThreadContext;
 import org.elasticsearch.http.HttpServerTransport;
-import org.elasticsearch.http.netty.NettyHttpServerTransport.HttpChannelPipelineFactory;
-import org.elasticsearch.http.netty.pipelining.OrderedDownstreamChannelEvent;
-import org.elasticsearch.http.netty.pipelining.OrderedUpstreamMessageEvent;
+import org.elasticsearch.http.netty.pipelining.HttpPipelinedRequest;
 import org.elasticsearch.indices.breaker.NoneCircuitBreakerService;
 import org.elasticsearch.test.ESTestCase;
 import org.elasticsearch.threadpool.TestThreadPool;
 import org.elasticsearch.threadpool.ThreadPool;
-import org.jboss.netty.buffer.ChannelBuffer;
-import org.jboss.netty.buffer.ChannelBuffers;
-import org.jboss.netty.channel.ChannelHandlerContext;
-import org.jboss.netty.channel.ChannelPipeline;
-import org.jboss.netty.channel.ChannelPipelineFactory;
-import org.jboss.netty.channel.ExceptionEvent;
-import org.jboss.netty.channel.MessageEvent;
-import org.jboss.netty.channel.SimpleChannelUpstreamHandler;
-import org.jboss.netty.handler.codec.http.DefaultHttpResponse;
-import org.jboss.netty.handler.codec.http.HttpRequest;
-import org.jboss.netty.handler.codec.http.HttpResponse;
-import org.jboss.netty.handler.codec.http.QueryStringDecoder;
 import org.junit.After;
 import org.junit.Before;
 
@@ -54,13 +50,13 @@ import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import static io.netty.handler.codec.http.HttpHeaders.Names.CONTENT_LENGTH;
+import static io.netty.handler.codec.http.HttpResponseStatus.OK;
+import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 import static org.elasticsearch.http.netty.NettyHttpClient.returnHttpResponseBodies;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
-import static org.jboss.netty.handler.codec.http.HttpHeaders.Names.CONTENT_LENGTH;
-import static org.jboss.netty.handler.codec.http.HttpResponseStatus.OK;
-import static org.jboss.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 
 /**
  * This test just tests, if he pipelining works in general with out any connection the elasticsearch handler
@@ -99,7 +95,7 @@ public class NettyHttpServerPipeliningTests extends ESTestCase {
 
         List<String> requests = Arrays.asList("/firstfast", "/slow?sleep=500", "/secondfast", "/slow?sleep=1000", "/thirdfast");
         try (NettyHttpClient nettyHttpClient = new NettyHttpClient()) {
-            Collection<HttpResponse> responses = nettyHttpClient.get(transportAddress.address(), requests.toArray(new String[]{}));
+            Collection<FullHttpResponse> responses = nettyHttpClient.get(transportAddress.address(), requests.toArray(new String[]{}));
             Collection<String> responseBodies = returnHttpResponseBodies(responses);
             assertThat(responseBodies, contains("/firstfast", "/slow?sleep=500", "/secondfast", "/slow?sleep=1000", "/thirdfast"));
         }
@@ -116,7 +112,7 @@ public class NettyHttpServerPipeliningTests extends ESTestCase {
 
         List<String> requests = Arrays.asList("/slow?sleep=1000", "/firstfast", "/secondfast", "/thirdfast", "/slow?sleep=500");
         try (NettyHttpClient nettyHttpClient = new NettyHttpClient()) {
-            Collection<HttpResponse> responses = nettyHttpClient.get(transportAddress.address(), requests.toArray(new String[]{}));
+            Collection<FullHttpResponse> responses = nettyHttpClient.get(transportAddress.address(), requests.toArray(new String[]{}));
             List<String> responseBodies = new ArrayList<>(returnHttpResponseBodies(responses));
             // we cannot be sure about the order of the fast requests, but the slow ones should have to be last
             assertThat(responseBodies, hasSize(5));
@@ -137,8 +133,8 @@ public class NettyHttpServerPipeliningTests extends ESTestCase {
         }
 
         @Override
-        public ChannelPipelineFactory configureServerChannelPipelineFactory() {
-            return new CustomHttpChannelPipelineFactory(this, executorService, NettyHttpServerPipeliningTests.this.threadPool.getThreadContext());
+        public ChannelHandler configureServerChannelHandler() {
+            return new CustomHttpChannelHandler(this, executorService, NettyHttpServerPipeliningTests.this.threadPool.getThreadContext());
         }
 
         @Override
@@ -148,24 +144,23 @@ public class NettyHttpServerPipeliningTests extends ESTestCase {
         }
     }
 
-    private class CustomHttpChannelPipelineFactory extends HttpChannelPipelineFactory {
+    private class CustomHttpChannelHandler extends NettyHttpServerTransport.HttpChannelHandler {
 
         private final ExecutorService executorService;
 
-        public CustomHttpChannelPipelineFactory(NettyHttpServerTransport transport, ExecutorService executorService, ThreadContext threadContext) {
+        public CustomHttpChannelHandler(NettyHttpServerTransport transport, ExecutorService executorService, ThreadContext threadContext) {
             super(transport, randomBoolean(), threadContext);
             this.executorService = executorService;
         }
 
         @Override
-        public ChannelPipeline getPipeline() throws Exception {
-            ChannelPipeline pipeline = super.getPipeline();
-            pipeline.replace("handler", "handler", new PossiblySlowUpstreamHandler(executorService));
-            return pipeline;
+        protected void initChannel(SocketChannel ch) throws Exception {
+            super.initChannel(ch);
+            ch.pipeline().replace("handler", "handler", new PossiblySlowUpstreamHandler(executorService));
         }
     }
 
-    class PossiblySlowUpstreamHandler extends SimpleChannelUpstreamHandler {
+    class PossiblySlowUpstreamHandler extends SimpleChannelInboundHandler<Object> {
 
         private final ExecutorService executorService;
 
@@ -174,47 +169,50 @@ public class NettyHttpServerPipeliningTests extends ESTestCase {
         }
 
         @Override
-        public void messageReceived(final ChannelHandlerContext ctx, final MessageEvent e) throws Exception {
-            executorService.submit(new PossiblySlowRunnable(ctx, e));
+        protected void channelRead0(ChannelHandlerContext ctx, Object msg) throws Exception {
+            executorService.submit(new PossiblySlowRunnable(ctx, msg));
         }
 
         @Override
-        public void exceptionCaught(ChannelHandlerContext ctx, ExceptionEvent e) {
+        public void exceptionCaught(ChannelHandlerContext ctx, Throwable e) {
             logger.info("Caught exception", e.getCause());
-            e.getChannel().close();
+            ctx.channel().close();
         }
     }
 
     class PossiblySlowRunnable implements Runnable {
 
         private ChannelHandlerContext ctx;
-        private MessageEvent e;
+        private HttpPipelinedRequest pipelinedRequest;
+        private FullHttpRequest fullHttpRequest;
 
-        public PossiblySlowRunnable(ChannelHandlerContext ctx, MessageEvent e) {
+        public PossiblySlowRunnable(ChannelHandlerContext ctx, Object object) {
             this.ctx = ctx;
-            this.e = e;
+            if (object instanceof HttpPipelinedRequest) {
+                this.pipelinedRequest = (HttpPipelinedRequest) object;
+            } else if (object instanceof FullHttpRequest) {
+                this.fullHttpRequest = (FullHttpRequest) object;
+            }
         }
 
         @Override
         public void run() {
-            HttpRequest request;
-            OrderedUpstreamMessageEvent oue = null;
-            if (e instanceof OrderedUpstreamMessageEvent) {
-                oue = (OrderedUpstreamMessageEvent) e;
-                request = (HttpRequest) oue.getMessage();
+            String uri;
+            if (pipelinedRequest != null && pipelinedRequest.getRequest() instanceof FullHttpRequest) {
+                uri = ((FullHttpRequest) pipelinedRequest.getRequest()).uri();
             } else {
-                request = (HttpRequest) e.getMessage();
+                uri = fullHttpRequest.uri();
             }
 
-            ChannelBuffer buffer = ChannelBuffers.copiedBuffer(request.getUri(), StandardCharsets.UTF_8);
+            ByteBuf buffer = Unpooled.copiedBuffer(uri, StandardCharsets.UTF_8);
 
-            DefaultHttpResponse httpResponse = new DefaultHttpResponse(HTTP_1_1, OK);
+            DefaultFullHttpResponse httpResponse = new DefaultFullHttpResponse(HTTP_1_1, OK, buffer);
             httpResponse.headers().add(CONTENT_LENGTH, buffer.readableBytes());
-            httpResponse.setContent(buffer);
 
-            QueryStringDecoder decoder = new QueryStringDecoder(request.getUri());
+            QueryStringDecoder decoder = new QueryStringDecoder(uri);
 
-            final int timeout = request.getUri().startsWith("/slow") && decoder.getParameters().containsKey("sleep") ? Integer.valueOf(decoder.getParameters().get("sleep").get(0)) : 0;
+            final int timeout = uri.startsWith("/slow") && decoder.parameters().containsKey("sleep") ?
+                    Integer.valueOf(decoder.parameters().get("sleep").get(0)) : 0;
             if (timeout > 0) {
                 try {
                     Thread.sleep(timeout);
@@ -224,10 +222,10 @@ public class NettyHttpServerPipeliningTests extends ESTestCase {
                 }
             }
 
-            if (oue != null) {
-                ctx.sendDownstream(new OrderedDownstreamChannelEvent(oue, 0, true, httpResponse));
+            if (pipelinedRequest!= null) {
+                ctx.writeAndFlush(pipelinedRequest.createHttpResponse(httpResponse, ctx.channel().newPromise()));
             } else {
-                ctx.getChannel().write(httpResponse);
+                ctx.writeAndFlush(httpResponse);
             }
         }
     }

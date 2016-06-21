@@ -19,30 +19,29 @@
 
 package org.elasticsearch.http.netty.cors;
 
+import io.netty.channel.ChannelDuplexHandler;
 import org.elasticsearch.common.Strings;
-import org.jboss.netty.channel.ChannelFutureListener;
-import org.jboss.netty.channel.ChannelHandlerContext;
-import org.jboss.netty.channel.MessageEvent;
-import org.jboss.netty.channel.SimpleChannelUpstreamHandler;
-import org.jboss.netty.handler.codec.http.DefaultHttpResponse;
-import org.jboss.netty.handler.codec.http.HttpHeaders;
-import org.jboss.netty.handler.codec.http.HttpMethod;
-import org.jboss.netty.handler.codec.http.HttpRequest;
-import org.jboss.netty.handler.codec.http.HttpResponse;
+import io.netty.channel.ChannelFutureListener;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.handler.codec.http.DefaultHttpResponse;
+import io.netty.handler.codec.http.HttpHeaders;
+import io.netty.handler.codec.http.HttpMethod;
+import io.netty.handler.codec.http.HttpRequest;
+import io.netty.handler.codec.http.HttpResponse;
 
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
-import static org.jboss.netty.handler.codec.http.HttpHeaders.Names.ACCESS_CONTROL_ALLOW_CREDENTIALS;
-import static org.jboss.netty.handler.codec.http.HttpHeaders.Names.ACCESS_CONTROL_ALLOW_HEADERS;
-import static org.jboss.netty.handler.codec.http.HttpHeaders.Names.ACCESS_CONTROL_ALLOW_METHODS;
-import static org.jboss.netty.handler.codec.http.HttpHeaders.Names.ACCESS_CONTROL_ALLOW_ORIGIN;
-import static org.jboss.netty.handler.codec.http.HttpHeaders.Names.ACCESS_CONTROL_MAX_AGE;
-import static org.jboss.netty.handler.codec.http.HttpHeaders.Names.HOST;
-import static org.jboss.netty.handler.codec.http.HttpHeaders.Names.ORIGIN;
-import static org.jboss.netty.handler.codec.http.HttpHeaders.Names.VARY;
-import static org.jboss.netty.handler.codec.http.HttpResponseStatus.FORBIDDEN;
-import static org.jboss.netty.handler.codec.http.HttpResponseStatus.OK;
+import static io.netty.handler.codec.http.HttpHeaders.Names.ACCESS_CONTROL_ALLOW_CREDENTIALS;
+import static io.netty.handler.codec.http.HttpHeaders.Names.ACCESS_CONTROL_ALLOW_HEADERS;
+import static io.netty.handler.codec.http.HttpHeaders.Names.ACCESS_CONTROL_ALLOW_METHODS;
+import static io.netty.handler.codec.http.HttpHeaders.Names.ACCESS_CONTROL_ALLOW_ORIGIN;
+import static io.netty.handler.codec.http.HttpHeaders.Names.ACCESS_CONTROL_MAX_AGE;
+import static io.netty.handler.codec.http.HttpHeaders.Names.HOST;
+import static io.netty.handler.codec.http.HttpHeaders.Names.ORIGIN;
+import static io.netty.handler.codec.http.HttpHeaders.Names.VARY;
+import static io.netty.handler.codec.http.HttpResponseStatus.FORBIDDEN;
+import static io.netty.handler.codec.http.HttpResponseStatus.OK;
 
 /**
  * Handles <a href="http://www.w3.org/TR/cors/">Cross Origin Resource Sharing</a> (CORS) requests.
@@ -51,8 +50,10 @@ import static org.jboss.netty.handler.codec.http.HttpResponseStatus.OK;
  * refer to this class for details about the configuration options available.
  *
  * This code was borrowed from Netty 4 and refactored to work for Elasticsearch's Netty 3 setup.
+ *
+ * // TODO REFACTOR TO USE NETTY4 HANDLERS WHERE POSSIBLE
  */
-public class CorsHandler extends SimpleChannelUpstreamHandler {
+public class CorsHandler extends ChannelDuplexHandler {
 
     public static final String ANY_ORIGIN = "*";
     private static Pattern SCHEME_PATTERN = Pattern.compile("^https?://");
@@ -71,9 +72,9 @@ public class CorsHandler extends SimpleChannelUpstreamHandler {
     }
 
     @Override
-    public void messageReceived(final ChannelHandlerContext ctx, final MessageEvent e) throws Exception {
-        if (config.isCorsSupportEnabled() && e.getMessage() instanceof HttpRequest) {
-            request = (HttpRequest) e.getMessage();
+    public void channelRead(final ChannelHandlerContext ctx, final Object msg) throws Exception {
+        if (config.isCorsSupportEnabled() && msg instanceof HttpRequest) {
+            request = (HttpRequest) msg;
             if (isPreflightRequest(request)) {
                 handlePreflight(ctx, request);
                 return;
@@ -83,7 +84,8 @@ public class CorsHandler extends SimpleChannelUpstreamHandler {
                 return;
             }
         }
-        super.messageReceived(ctx, e);
+
+        ctx.fireChannelRead(msg);
     }
 
     public static void setCorsResponseHeaders(HttpRequest request, HttpResponse resp, CorsConfig config) {
@@ -117,14 +119,14 @@ public class CorsHandler extends SimpleChannelUpstreamHandler {
             setAllowCredentials(response);
             setMaxAge(response);
             setPreflightHeaders(response);
-            ctx.getChannel().write(response).addListener(ChannelFutureListener.CLOSE);
+            ctx.channel().write(response).addListener(ChannelFutureListener.CLOSE);
         } else {
             forbidden(ctx, request);
         }
     }
 
     private static void forbidden(final ChannelHandlerContext ctx, final HttpRequest request) {
-        ctx.getChannel().write(new DefaultHttpResponse(request.getProtocolVersion(), FORBIDDEN))
+        ctx.channel().write(new DefaultHttpResponse(request.getProtocolVersion(), FORBIDDEN))
             .addListener(ChannelFutureListener.CLOSE);
     }
 
@@ -229,7 +231,7 @@ public class CorsHandler extends SimpleChannelUpstreamHandler {
 
     private void setAllowMethods(final HttpResponse response) {
         response.headers().set(ACCESS_CONTROL_ALLOW_METHODS, config.allowedRequestMethods().stream()
-                                          .map(m -> m.getName().trim())
+                                          .map(m -> m.name().trim())
                                           .collect(Collectors.toList()));
     }
 

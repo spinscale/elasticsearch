@@ -43,9 +43,9 @@ import org.elasticsearch.transport.TransportConnectionListener;
 import org.elasticsearch.transport.TransportService;
 import org.elasticsearch.transport.TransportSettings;
 import org.elasticsearch.transport.netty.NettyTransport;
-import org.jboss.netty.util.internal.ConcurrentHashMap;
 
 import java.net.InetSocketAddress;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
 

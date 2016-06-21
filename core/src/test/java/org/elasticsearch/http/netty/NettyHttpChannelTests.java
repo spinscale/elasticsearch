@@ -19,6 +19,24 @@
 
 package org.elasticsearch.http.netty;
 
+import io.netty.buffer.ByteBufAllocator;
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelConfig;
+import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelId;
+import io.netty.channel.ChannelMetadata;
+import io.netty.channel.ChannelPipeline;
+import io.netty.channel.ChannelProgressivePromise;
+import io.netty.channel.ChannelPromise;
+import io.netty.channel.EventLoop;
+import io.netty.handler.codec.http.DefaultFullHttpRequest;
+import io.netty.handler.codec.http.FullHttpRequest;
+import io.netty.handler.codec.http.HttpHeaders;
+import io.netty.handler.codec.http.HttpMethod;
+import io.netty.handler.codec.http.HttpResponse;
+import io.netty.handler.codec.http.HttpVersion;
+import io.netty.util.Attribute;
+import io.netty.util.AttributeKey;
 import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.network.NetworkService;
@@ -32,19 +50,6 @@ import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.test.ESTestCase;
 import org.elasticsearch.threadpool.TestThreadPool;
 import org.elasticsearch.threadpool.ThreadPool;
-import org.jboss.netty.buffer.ChannelBuffer;
-import org.jboss.netty.buffer.ChannelBuffers;
-import org.jboss.netty.channel.Channel;
-import org.jboss.netty.channel.ChannelConfig;
-import org.jboss.netty.channel.ChannelFactory;
-import org.jboss.netty.channel.ChannelFuture;
-import org.jboss.netty.channel.ChannelPipeline;
-import org.jboss.netty.handler.codec.http.DefaultHttpHeaders;
-import org.jboss.netty.handler.codec.http.HttpHeaders;
-import org.jboss.netty.handler.codec.http.HttpMethod;
-import org.jboss.netty.handler.codec.http.HttpRequest;
-import org.jboss.netty.handler.codec.http.HttpResponse;
-import org.jboss.netty.handler.codec.http.HttpVersion;
 import org.junit.After;
 import org.junit.Before;
 
@@ -175,7 +180,7 @@ public class NettyHttpChannelTests extends ESTestCase {
     public void testHeadersSet() {
         Settings settings = Settings.builder().build();
         httpServerTransport = new NettyHttpServerTransport(settings, networkService, bigArrays, threadPool);
-        HttpRequest httpRequest = new TestHttpRequest();
+        FullHttpRequest httpRequest = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.GET, "/");
         httpRequest.headers().add(HttpHeaders.Names.ORIGIN, "remote");
         WriteCapturingChannel writeCapturingChannel = new WriteCapturingChannel();
         NettyHttpRequest request = new NettyHttpRequest(httpRequest, writeCapturingChannel);
@@ -201,7 +206,7 @@ public class NettyHttpChannelTests extends ESTestCase {
     private HttpResponse execRequestWithCors(final Settings settings, final String originValue, final String host) {
         // construct request and send it over the transport layer
         httpServerTransport = new NettyHttpServerTransport(settings, networkService, bigArrays, threadPool);
-        HttpRequest httpRequest = new TestHttpRequest();
+        FullHttpRequest httpRequest = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.GET, "/");
         httpRequest.headers().add(HttpHeaders.Names.ORIGIN, originValue);
         httpRequest.headers().add(HttpHeaders.Names.HOST, host);
         WriteCapturingChannel writeCapturingChannel = new WriteCapturingChannel();
@@ -220,28 +225,27 @@ public class NettyHttpChannelTests extends ESTestCase {
 
         private List<Object> writtenObjects = new ArrayList<>();
 
+        public List<Object> getWrittenObjects() {
+            return writtenObjects;
+        }
+
         @Override
-        public Integer getId() {
+        public ChannelId id() {
             return null;
         }
 
         @Override
-        public ChannelFactory getFactory() {
+        public EventLoop eventLoop() {
             return null;
         }
 
         @Override
-        public Channel getParent() {
+        public Channel parent() {
             return null;
         }
 
         @Override
-        public ChannelConfig getConfig() {
-            return null;
-        }
-
-        @Override
-        public ChannelPipeline getPipeline() {
+        public ChannelConfig config() {
             return null;
         }
 
@@ -251,22 +255,27 @@ public class NettyHttpChannelTests extends ESTestCase {
         }
 
         @Override
-        public boolean isBound() {
+        public boolean isRegistered() {
             return false;
         }
 
         @Override
-        public boolean isConnected() {
+        public boolean isActive() {
             return false;
         }
 
         @Override
-        public SocketAddress getLocalAddress() {
+        public ChannelMetadata metadata() {
             return null;
         }
 
         @Override
-        public SocketAddress getRemoteAddress() {
+        public SocketAddress localAddress() {
+            return null;
+        }
+
+        @Override
+        public SocketAddress remoteAddress() {
             return null;
         }
 
@@ -277,7 +286,7 @@ public class NettyHttpChannelTests extends ESTestCase {
         }
 
         @Override
-        public ChannelFuture write(Object message, SocketAddress remoteAddress) {
+        public ChannelFuture write(Object message, ChannelPromise promise) {
             writtenObjects.add(message);
             return null;
         }
@@ -293,12 +302,12 @@ public class NettyHttpChannelTests extends ESTestCase {
         }
 
         @Override
-        public ChannelFuture disconnect() {
+        public ChannelFuture connect(SocketAddress remoteAddress, SocketAddress localAddress) {
             return null;
         }
 
         @Override
-        public ChannelFuture unbind() {
+        public ChannelFuture disconnect() {
             return null;
         }
 
@@ -308,18 +317,43 @@ public class NettyHttpChannelTests extends ESTestCase {
         }
 
         @Override
-        public ChannelFuture getCloseFuture() {
+        public ChannelFuture deregister() {
             return null;
         }
 
         @Override
-        public int getInterestOps() {
-            return 0;
+        public ChannelFuture bind(SocketAddress localAddress, ChannelPromise promise) {
+            return null;
         }
 
         @Override
-        public boolean isReadable() {
-            return false;
+        public ChannelFuture connect(SocketAddress remoteAddress, ChannelPromise promise) {
+            return null;
+        }
+
+        @Override
+        public ChannelFuture connect(SocketAddress remoteAddress, SocketAddress localAddress, ChannelPromise promise) {
+            return null;
+        }
+
+        @Override
+        public ChannelFuture disconnect(ChannelPromise promise) {
+            return null;
+        }
+
+        @Override
+        public ChannelFuture close(ChannelPromise promise) {
+            return null;
+        }
+
+        @Override
+        public ChannelFuture deregister(ChannelPromise promise) {
+            return null;
+        }
+
+        @Override
+        public ChannelFuture closeFuture() {
+            return null;
         }
 
         @Override
@@ -328,104 +362,88 @@ public class NettyHttpChannelTests extends ESTestCase {
         }
 
         @Override
-        public ChannelFuture setInterestOps(int interestOps) {
+        public long bytesBeforeUnwritable() {
+            return 0;
+        }
+
+        @Override
+        public long bytesBeforeWritable() {
+            return 0;
+        }
+
+        @Override
+        public Unsafe unsafe() {
             return null;
         }
 
         @Override
-        public ChannelFuture setReadable(boolean readable) {
+        public ChannelPipeline pipeline() {
             return null;
         }
 
         @Override
-        public boolean getUserDefinedWritability(int index) {
+        public ByteBufAllocator alloc() {
+            return null;
+        }
+
+        @Override
+        public Channel read() {
+            return null;
+        }
+
+        @Override
+        public Channel flush() {
+            return null;
+        }
+
+        @Override
+        public ChannelFuture writeAndFlush(Object msg, ChannelPromise promise) {
+            return null;
+        }
+
+        @Override
+        public ChannelFuture writeAndFlush(Object msg) {
+            return null;
+        }
+
+        @Override
+        public ChannelPromise newPromise() {
+            return null;
+        }
+
+        @Override
+        public ChannelProgressivePromise newProgressivePromise() {
+            return null;
+        }
+
+        @Override
+        public ChannelFuture newSucceededFuture() {
+            return null;
+        }
+
+        @Override
+        public ChannelFuture newFailedFuture(Throwable cause) {
+            return null;
+        }
+
+        @Override
+        public ChannelPromise voidPromise() {
+            return null;
+        }
+
+        @Override
+        public <T> Attribute<T> attr(AttributeKey<T> key) {
+            return null;
+        }
+
+        @Override
+        public <T> boolean hasAttr(AttributeKey<T> key) {
             return false;
-        }
-
-        @Override
-        public void setUserDefinedWritability(int index, boolean isWritable) {
-
-        }
-
-        @Override
-        public Object getAttachment() {
-            return null;
-        }
-
-        @Override
-        public void setAttachment(Object attachment) {
-
         }
 
         @Override
         public int compareTo(Channel o) {
             return 0;
-        }
-
-        public List<Object> getWrittenObjects() {
-            return writtenObjects;
-        }
-    }
-
-    private static class TestHttpRequest implements HttpRequest {
-
-        private HttpHeaders headers = new DefaultHttpHeaders();
-
-        private ChannelBuffer content = ChannelBuffers.EMPTY_BUFFER;
-
-        @Override
-        public HttpMethod getMethod() {
-            return null;
-        }
-
-        @Override
-        public void setMethod(HttpMethod method) {
-
-        }
-
-        @Override
-        public String getUri() {
-            return "";
-        }
-
-        @Override
-        public void setUri(String uri) {
-
-        }
-
-        @Override
-        public HttpVersion getProtocolVersion() {
-            return HttpVersion.HTTP_1_1;
-        }
-
-        @Override
-        public void setProtocolVersion(HttpVersion version) {
-
-        }
-
-        @Override
-        public HttpHeaders headers() {
-            return headers;
-        }
-
-        @Override
-        public ChannelBuffer getContent() {
-            return content;
-        }
-
-        @Override
-        public void setContent(ChannelBuffer content) {
-            this.content = content;
-        }
-
-        @Override
-        public boolean isChunked() {
-            return false;
-        }
-
-        @Override
-        public void setChunked(boolean chunked) {
-
         }
     }
 

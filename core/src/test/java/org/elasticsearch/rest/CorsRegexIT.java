@@ -18,6 +18,7 @@
  */
 package org.elasticsearch.rest;
 
+import io.netty.handler.codec.http.HttpHeaderNames;
 import org.apache.http.message.BasicHeader;
 import org.elasticsearch.client.Response;
 import org.elasticsearch.client.ResponseException;
@@ -28,7 +29,6 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.test.ESIntegTestCase;
 import org.elasticsearch.test.ESIntegTestCase.ClusterScope;
 import org.elasticsearch.test.ESIntegTestCase.Scope;
-import org.jboss.netty.handler.codec.http.HttpHeaders;
 
 import java.util.Collections;
 
@@ -105,7 +105,7 @@ public class CorsRegexIT extends ESIntegTestCase {
         String corsValue = "http://localhost:9200";
         try (Response response = getRestClient().performRequest("OPTIONS", "/", Collections.emptyMap(), null,
                 new BasicHeader("User-Agent", "Mozilla Bar"), new BasicHeader("Origin", corsValue),
-                new BasicHeader(HttpHeaders.Names.ACCESS_CONTROL_REQUEST_METHOD, "GET"));) {
+                new BasicHeader(HttpHeaderNames.ACCESS_CONTROL_REQUEST_METHOD.toString(), "GET"));) {
             assertResponseWithOriginheader(response, corsValue);
             assertNotNull(response.getHeader("Access-Control-Allow-Methods"));
         }
@@ -115,7 +115,7 @@ public class CorsRegexIT extends ESIntegTestCase {
         try {
             getRestClient().performRequest("OPTIONS", "/", Collections.emptyMap(), null, new BasicHeader("User-Agent", "Mozilla Bar"),
                     new BasicHeader("Origin", "http://evil-host:9200"),
-                    new BasicHeader(HttpHeaders.Names.ACCESS_CONTROL_REQUEST_METHOD, "GET"));
+                    new BasicHeader(HttpHeaderNames.ACCESS_CONTROL_REQUEST_METHOD.toString(), "GET"));
             fail("request should have failed");
         } catch(ResponseException e) {
             Response response = e.getResponse();

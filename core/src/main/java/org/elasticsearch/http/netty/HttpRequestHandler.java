@@ -19,20 +19,18 @@
 
 package org.elasticsearch.http.netty;
 
+import io.netty.channel.ChannelHandler;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.SimpleChannelInboundHandler;
+import io.netty.handler.codec.http.FullHttpRequest;
 import org.elasticsearch.common.util.concurrent.ThreadContext;
-import org.elasticsearch.http.netty.pipelining.OrderedUpstreamMessageEvent;
-import org.jboss.netty.channel.ChannelHandler;
-import org.jboss.netty.channel.ChannelHandlerContext;
-import org.jboss.netty.channel.ExceptionEvent;
-import org.jboss.netty.channel.MessageEvent;
-import org.jboss.netty.channel.SimpleChannelUpstreamHandler;
-import org.jboss.netty.handler.codec.http.HttpRequest;
+import org.elasticsearch.http.netty.pipelining.HttpPipelinedRequest;
 
 /**
  *
  */
 @ChannelHandler.Sharable
-public class HttpRequestHandler extends SimpleChannelUpstreamHandler {
+public class HttpRequestHandler extends SimpleChannelInboundHandler<Object> {
 
     private final NettyHttpServerTransport serverTransport;
     private final boolean httpPipeliningEnabled;
@@ -47,27 +45,27 @@ public class HttpRequestHandler extends SimpleChannelUpstreamHandler {
     }
 
     @Override
-    public void messageReceived(ChannelHandlerContext ctx, MessageEvent e) throws Exception {
-        HttpRequest request;
-        OrderedUpstreamMessageEvent oue = null;
-        if (this.httpPipeliningEnabled && e instanceof OrderedUpstreamMessageEvent) {
-            oue = (OrderedUpstreamMessageEvent) e;
-            request = (HttpRequest) oue.getMessage();
+    protected void channelRead0(ChannelHandlerContext ctx, Object message) throws Exception {
+        FullHttpRequest request;
+        HttpPipelinedRequest pipelinedRequest = null;
+        if (this.httpPipeliningEnabled && message instanceof HttpPipelinedRequest) {
+            pipelinedRequest = (HttpPipelinedRequest) message;
+            request = (FullHttpRequest) pipelinedRequest.getRequest();
         } else {
-            request = (HttpRequest) e.getMessage();
+            request = (FullHttpRequest) message;
         }
 
         threadContext.copyHeaders(request.headers());
         // the netty HTTP handling always copy over the buffer to its own buffer, either in NioWorker internally
-        // when reading, or using a cumalation buffer
-        NettyHttpRequest httpRequest = new NettyHttpRequest(request, e.getChannel());
-        NettyHttpChannel channel = new NettyHttpChannel(serverTransport, httpRequest, oue, detailedErrorsEnabled);
-        serverTransport.dispatchRequest(httpRequest, channel);
-        super.messageReceived(ctx, e);
+        // when reading, or using a cumulation buffer
+        NettyHttpRequest httpRequest = new NettyHttpRequest(request, ctx.channel());
+
+        serverTransport.dispatchRequest(httpRequest, new NettyHttpChannel(serverTransport, httpRequest, pipelinedRequest,
+                detailedErrorsEnabled));
     }
 
     @Override
-    public void exceptionCaught(ChannelHandlerContext ctx, ExceptionEvent e) throws Exception {
-        serverTransport.exceptionCaught(ctx, e);
+    public void exceptionCaught(ChannelHandlerContext ctx, Throwable t) {
+        serverTransport.exceptionCaught(ctx, t);
     }
 }

@@ -19,13 +19,12 @@
 
 package org.elasticsearch.common.bytes;
 
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.io.Channels;
 import org.elasticsearch.common.io.stream.ByteBufferStreamInput;
 import org.elasticsearch.common.io.stream.StreamInput;
-import org.jboss.netty.buffer.ChannelBuffer;
-import org.jboss.netty.buffer.ChannelBuffers;
-import org.jboss.netty.util.CharsetUtil;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -114,8 +113,8 @@ public class ByteBufferBytesReference implements BytesReference {
     }
 
     @Override
-    public ChannelBuffer toChannelBuffer() {
-        return ChannelBuffers.wrappedBuffer(buffer);
+    public ByteBuf toByteBuf() {
+        return Unpooled.wrappedBuffer(buffer);
     }
 
     @Override
@@ -148,7 +147,7 @@ public class ByteBufferBytesReference implements BytesReference {
         if (!buffer.hasRemaining()) {
             return "";
         }
-        final CharsetDecoder decoder = CharsetUtil.getDecoder(StandardCharsets.UTF_8);
+        final CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder();
         final CharBuffer dst = CharBuffer.allocate(
                 (int) ((double) buffer.remaining() * decoder.maxCharsPerByte()));
         try {

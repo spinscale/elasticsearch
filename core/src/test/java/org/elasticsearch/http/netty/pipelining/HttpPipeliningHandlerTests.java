@@ -18,218 +18,219 @@
  */
 package org.elasticsearch.http.netty.pipelining;
 
-import org.elasticsearch.common.network.NetworkAddress;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufUtil;
+import io.netty.buffer.Unpooled;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.SimpleChannelInboundHandler;
+import io.netty.channel.embedded.EmbeddedChannel;
+import io.netty.handler.codec.http.DefaultFullHttpRequest;
+import io.netty.handler.codec.http.DefaultFullHttpResponse;
+import io.netty.handler.codec.http.DefaultHttpRequest;
+import io.netty.handler.codec.http.FullHttpRequest;
+import io.netty.handler.codec.http.FullHttpResponse;
+import io.netty.handler.codec.http.HttpMethod;
+import io.netty.handler.codec.http.HttpRequest;
+import io.netty.handler.codec.http.HttpVersion;
+import io.netty.handler.codec.http.LastHttpContent;
+import io.netty.handler.codec.http.QueryStringDecoder;
 import org.elasticsearch.test.ESTestCase;
-import org.jboss.netty.bootstrap.ClientBootstrap;
-import org.jboss.netty.bootstrap.ServerBootstrap;
-import org.jboss.netty.channel.Channel;
-import org.jboss.netty.channel.ChannelFuture;
-import org.jboss.netty.channel.ChannelHandlerContext;
-import org.jboss.netty.channel.ChannelPipeline;
-import org.jboss.netty.channel.ChannelPipelineFactory;
-import org.jboss.netty.channel.Channels;
-import org.jboss.netty.channel.MessageEvent;
-import org.jboss.netty.channel.SimpleChannelUpstreamHandler;
-import org.jboss.netty.channel.socket.nio.NioClientSocketChannelFactory;
-import org.jboss.netty.channel.socket.nio.NioServerSocketChannelFactory;
-import org.jboss.netty.handler.codec.http.DefaultHttpChunk;
-import org.jboss.netty.handler.codec.http.DefaultHttpRequest;
-import org.jboss.netty.handler.codec.http.DefaultHttpResponse;
-import org.jboss.netty.handler.codec.http.HttpChunk;
-import org.jboss.netty.handler.codec.http.HttpClientCodec;
-import org.jboss.netty.handler.codec.http.HttpMethod;
-import org.jboss.netty.handler.codec.http.HttpRequest;
-import org.jboss.netty.handler.codec.http.HttpRequestDecoder;
-import org.jboss.netty.handler.codec.http.HttpResponse;
-import org.jboss.netty.handler.codec.http.HttpResponseEncoder;
-import org.jboss.netty.util.HashedWheelTimer;
-import org.jboss.netty.util.Timeout;
-import org.jboss.netty.util.TimerTask;
 import org.junit.After;
-import org.junit.Before;
+import org.junit.Test;
 
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
+import java.nio.channels.ClosedChannelException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedTransferQueue;
+import java.util.concurrent.TimeUnit;
 
-import static java.util.concurrent.TimeUnit.MILLISECONDS;
-import static org.jboss.netty.buffer.ChannelBuffers.EMPTY_BUFFER;
-import static org.jboss.netty.buffer.ChannelBuffers.copiedBuffer;
-import static org.jboss.netty.handler.codec.http.HttpHeaders.Names.CONNECTION;
-import static org.jboss.netty.handler.codec.http.HttpHeaders.Names.CONTENT_TYPE;
-import static org.jboss.netty.handler.codec.http.HttpHeaders.Names.HOST;
-import static org.jboss.netty.handler.codec.http.HttpHeaders.Names.TRANSFER_ENCODING;
-import static org.jboss.netty.handler.codec.http.HttpHeaders.Values.CHUNKED;
-import static org.jboss.netty.handler.codec.http.HttpHeaders.Values.KEEP_ALIVE;
-import static org.jboss.netty.handler.codec.http.HttpResponseStatus.OK;
-import static org.jboss.netty.handler.codec.http.HttpVersion.HTTP_1_1;
-import static org.jboss.netty.util.CharsetUtil.UTF_8;
+import static io.netty.handler.codec.http.HttpHeaderNames.CONTENT_LENGTH;
+import static io.netty.handler.codec.http.HttpResponseStatus.OK;
+import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
+import static org.hamcrest.core.Is.is;
 
-/**
- *
- */
 public class HttpPipeliningHandlerTests extends ESTestCase {
 
-    private static final long RESPONSE_TIMEOUT = 10000L;
-    private static final long CONNECTION_TIMEOUT = 10000L;
-    private static final String CONTENT_TYPE_TEXT = "text/plain; charset=UTF-8";
-    private static final String PATH1 = "/1";
-    private static final String PATH2 = "/2";
-    private static final String SOME_RESPONSE_TEXT = "some response for ";
-
-    private ClientBootstrap clientBootstrap;
-    private ServerBootstrap serverBootstrap;
-
-    private CountDownLatch responsesIn;
-    private final List<String> responses = new ArrayList<>(2);
-
-    private HashedWheelTimer timer;
-
-    private InetSocketAddress boundAddress;
-
-    @Before
-    public void startBootstraps() {
-        clientBootstrap = new ClientBootstrap(new NioClientSocketChannelFactory());
-
-        clientBootstrap.setPipelineFactory(new ChannelPipelineFactory() {
-            @Override
-            public ChannelPipeline getPipeline() throws Exception {
-                return Channels.pipeline(
-                        new HttpClientCodec(),
-                        new ClientHandler()
-                );
-            }
-        });
-
-        serverBootstrap = new ServerBootstrap(new NioServerSocketChannelFactory());
-
-        serverBootstrap.setPipelineFactory(new ChannelPipelineFactory() {
-            @Override
-            public ChannelPipeline getPipeline() throws Exception {
-                return Channels.pipeline(
-                        new HttpRequestDecoder(),
-                        new HttpResponseEncoder(),
-                        new HttpPipeliningHandler(10000),
-                        new ServerHandler()
-                );
-            }
-        });
-
-        Channel channel = serverBootstrap.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0));
-        boundAddress = (InetSocketAddress) channel.getLocalAddress();
-
-        timer = new HashedWheelTimer();
-    }
+    private ExecutorService executorService = Executors.newFixedThreadPool(5);
+    private Map<String, CountDownLatch> waitingRequests = new ConcurrentHashMap<>();
 
     @After
-    public void releaseResources() {
-        timer.stop();
-
-        serverBootstrap.shutdown();
-        serverBootstrap.releaseExternalResources();
-        clientBootstrap.shutdown();
-        clientBootstrap.releaseExternalResources();
+    public void closeResources() throws InterruptedException {
+        // finish all waitingReqeusts
+        for (String url : waitingRequests.keySet()) {
+            finishRequest(url);
+        }
+        shutdownExecutorService();
     }
 
-    public void testShouldReturnMessagesInOrder() throws InterruptedException {
-        responsesIn = new CountDownLatch(1);
-        responses.clear();
+    @Test
+    public void testThatPipeliningWorksWithFastSerializedRequests() throws InterruptedException {
+        EmbeddedChannel embeddedChannel = new EmbeddedChannel(new HttpPipeliningHandler(10000), new WorkEmulatorHandler());
 
-        final ChannelFuture connectionFuture = clientBootstrap.connect(boundAddress);
+        for (int i = 0; i < 5; i++) {
+            embeddedChannel.writeInbound(createHttpRequest("/" + String.valueOf(i)));
+        }
 
-        assertTrue(connectionFuture.await(CONNECTION_TIMEOUT));
-        final Channel clientChannel = connectionFuture.getChannel();
+        for (String url : waitingRequests.keySet()) {
+            finishRequest(url);
+        }
 
-        // NetworkAddress.format makes a proper HOST header.
-        final HttpRequest request1 = new DefaultHttpRequest(
-                HTTP_1_1, HttpMethod.GET, PATH1);
-        request1.headers().add(HOST, NetworkAddress.format(boundAddress));
+        shutdownExecutorService();
 
-        final HttpRequest request2 = new DefaultHttpRequest(
-                HTTP_1_1, HttpMethod.GET, PATH2);
-        request2.headers().add(HOST, NetworkAddress.format(boundAddress));
+        for (int i = 0; i < 5; i++) {
+            assertReadHttpMessageHasContent(embeddedChannel, String.valueOf(i));
+        }
 
-        clientChannel.write(request1);
-        clientChannel.write(request2);
-
-        responsesIn.await(RESPONSE_TIMEOUT, MILLISECONDS);
-
-        assertTrue(responses.contains(SOME_RESPONSE_TEXT + PATH1));
-        assertTrue(responses.contains(SOME_RESPONSE_TEXT + PATH2));
+        assertThat(embeddedChannel.isOpen(), is(true));
     }
 
-    public class ClientHandler extends SimpleChannelUpstreamHandler {
-        @Override
-        public void messageReceived(final ChannelHandlerContext ctx, final MessageEvent e) {
-            final Object message = e.getMessage();
-            if (message instanceof HttpChunk) {
-                final HttpChunk response = (HttpChunk) e.getMessage();
-                if (!response.isLast()) {
-                    final String content = response.getContent().toString(UTF_8);
-                    responses.add(content);
-                    if (content.equals(SOME_RESPONSE_TEXT + PATH2)) {
-                        responsesIn.countDown();
-                    }
-                }
-            }
+    @Test
+    public void testThatPipeliningWorksWhenSlowRequestsInDifferentOrder() throws InterruptedException {
+        EmbeddedChannel embeddedChannel = new EmbeddedChannel(new HttpPipeliningHandler(10000), new WorkEmulatorHandler());
+
+        for (int i = 0; i < 5; i++) {
+            embeddedChannel.writeInbound(createHttpRequest("/" + String.valueOf(i)));
+        }
+
+        // random order execution..
+        List<String> urls = new ArrayList<>(waitingRequests.keySet());
+        Collections.shuffle(urls);
+        for (String url : urls) {
+            finishRequest(url);
+        }
+
+        shutdownExecutorService();
+
+        for (int i = 0; i < 5; i++) {
+            assertReadHttpMessageHasContent(embeddedChannel, String.valueOf(i));
+        }
+
+        assertThat(embeddedChannel.isOpen(), is(true));
+    }
+
+    @Test
+    public void testThatPipeliningWorksWithChunkedRequests() throws InterruptedException {
+        EmbeddedChannel embeddedChannel = new EmbeddedChannel(new AggregateUrisAndHeadersHandler(), new HttpPipeliningHandler(10000), new WorkEmulatorHandler());
+
+        DefaultHttpRequest httpRequest = new DefaultHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.GET, "/0");
+        embeddedChannel.writeInbound(httpRequest);
+        embeddedChannel.writeInbound(LastHttpContent.EMPTY_LAST_CONTENT);
+
+        httpRequest = new DefaultHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.GET, "/1");
+        embeddedChannel.writeInbound(httpRequest);
+        embeddedChannel.writeInbound(LastHttpContent.EMPTY_LAST_CONTENT);
+
+        finishRequest("1");
+        finishRequest("0");
+
+        shutdownExecutorService();
+
+        for (int i = 0; i < 2; i++) {
+            assertReadHttpMessageHasContent(embeddedChannel, String.valueOf(i));
+        }
+
+        assertThat(embeddedChannel.isOpen(), is(true));
+    }
+
+    @Test(expected = ClosedChannelException.class)
+    public void testThatPipeliningClosesConnectionWithTooManyEvents() throws InterruptedException {
+        EmbeddedChannel embeddedChannel = new EmbeddedChannel(new HttpPipeliningHandler(2), new WorkEmulatorHandler());
+
+        embeddedChannel.writeInbound(createHttpRequest("/0"));
+        // this two are put in the queue
+        embeddedChannel.writeInbound(createHttpRequest("/1"));
+        embeddedChannel.writeInbound(createHttpRequest("/2"));
+        embeddedChannel.writeInbound(createHttpRequest("/3"));
+
+        // finish two requests to fill up the queue
+        finishRequest("1");
+        finishRequest("2");
+
+        // this will close the channel
+        finishRequest("3");
+
+        finishRequest("0");
+        shutdownExecutorService();
+        embeddedChannel.writeInbound(createHttpRequest("/"));
+    }
+
+
+    private void assertReadHttpMessageHasContent(EmbeddedChannel embeddedChannel, String expectedContent) {
+        FullHttpResponse response = (FullHttpResponse) embeddedChannel.outboundMessages().poll();
+        assertNotNull("Expected response to exist, maybe you did not wait long enough?", response);
+        assertNotNull("Expected response to have content " + expectedContent, response.content());
+        String data = new String(ByteBufUtil.getBytes(response.content()), StandardCharsets.UTF_8);
+        assertThat(data, is(expectedContent));
+    }
+
+    private void finishRequest(String url) {
+        waitingRequests.get(url).countDown();
+    }
+
+    private void shutdownExecutorService() throws InterruptedException {
+        if (!executorService.isShutdown()) {
+            executorService.shutdown();
+            executorService.awaitTermination(10, TimeUnit.SECONDS);
         }
     }
 
-    public class ServerHandler extends SimpleChannelUpstreamHandler {
-        private final AtomicBoolean sendFinalChunk = new AtomicBoolean(false);
+    private FullHttpRequest createHttpRequest(String uri) {
+        final FullHttpRequest httpRequest = new DefaultFullHttpRequest(HTTP_1_1, HttpMethod.GET, uri);
+        return httpRequest;
+    }
+
+    /**
+     *
+     */
+    private static class AggregateUrisAndHeadersHandler extends SimpleChannelInboundHandler<HttpRequest> {
+
+        public static final Queue<String> QUEUE_URI = new LinkedTransferQueue<>();
 
         @Override
-        public void messageReceived(final ChannelHandlerContext ctx, final MessageEvent e) throws InterruptedException {
-            final HttpRequest request = (HttpRequest) e.getMessage();
-
-            final OrderedUpstreamMessageEvent oue = (OrderedUpstreamMessageEvent) e;
-            final String uri = request.getUri();
-
-            final HttpResponse initialChunk = new DefaultHttpResponse(HTTP_1_1, OK);
-            initialChunk.headers().add(CONTENT_TYPE, CONTENT_TYPE_TEXT);
-            initialChunk.headers().add(CONNECTION, KEEP_ALIVE);
-            initialChunk.headers().add(TRANSFER_ENCODING, CHUNKED);
-
-            ctx.sendDownstream(new OrderedDownstreamChannelEvent(oue, 0, false, initialChunk));
-
-            timer.newTimeout(new ChunkWriter(ctx, e, uri, oue, 1), 0, MILLISECONDS);
+        protected void channelRead0(ChannelHandlerContext ctx, HttpRequest request) throws Exception {
+            QUEUE_URI.add(request.uri());
         }
+    }
 
-        private class ChunkWriter implements TimerTask {
-            private final ChannelHandlerContext ctx;
-            private final MessageEvent e;
-            private final String uri;
-            private final OrderedUpstreamMessageEvent oue;
-            private final int subSequence;
+    private class WorkEmulatorHandler extends SimpleChannelInboundHandler<HttpPipelinedRequest> {
 
-            public ChunkWriter(final ChannelHandlerContext ctx, final MessageEvent e, final String uri,
-                               final OrderedUpstreamMessageEvent oue, final int subSequence) {
-                this.ctx = ctx;
-                this.e = e;
-                this.uri = uri;
-                this.oue = oue;
-                this.subSequence = subSequence;
+        @Override
+        protected void channelRead0(final ChannelHandlerContext ctx, final HttpPipelinedRequest pipelinedRequest) throws Exception {
+            final QueryStringDecoder decoder;
+            if (pipelinedRequest.getRequest() instanceof FullHttpRequest) {
+                final FullHttpRequest fullHttpRequest = (FullHttpRequest) pipelinedRequest.getRequest();
+                decoder = new QueryStringDecoder(fullHttpRequest.uri());
+            } else {
+                decoder = new QueryStringDecoder(AggregateUrisAndHeadersHandler.QUEUE_URI.poll());
             }
 
-            @Override
-            public void run(final Timeout timeout) {
-                if (sendFinalChunk.get() && subSequence > 1) {
-                    final HttpChunk finalChunk = new DefaultHttpChunk(EMPTY_BUFFER);
-                    ctx.sendDownstream(new OrderedDownstreamChannelEvent(oue, subSequence, true, finalChunk));
-                } else {
-                    final HttpChunk chunk = new DefaultHttpChunk(copiedBuffer(SOME_RESPONSE_TEXT + uri, UTF_8));
-                    ctx.sendDownstream(new OrderedDownstreamChannelEvent(oue, subSequence, false, chunk));
+            final String uri = decoder.path().replace("/", "");
+            ByteBuf content = Unpooled.copiedBuffer(uri, StandardCharsets.UTF_8);
+            final DefaultFullHttpResponse httpResponse = new DefaultFullHttpResponse(HTTP_1_1, OK, content);
+            httpResponse.headers().add(CONTENT_LENGTH, content.readableBytes());
 
-                    timer.newTimeout(new ChunkWriter(ctx, e, uri, oue, subSequence + 1), 0, MILLISECONDS);
+            final CountDownLatch latch = new CountDownLatch(1);
+            waitingRequests.put(uri, latch);
 
-                    if (uri.equals(PATH2)) {
-                        sendFinalChunk.set(true);
+            executorService.submit(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        latch.await(2, TimeUnit.SECONDS);
+                        ctx.writeAndFlush(pipelinedRequest.createHttpResponse(httpResponse, ctx.channel().newPromise()));
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
                     }
                 }
-            }
+            });
         }
     }
 }

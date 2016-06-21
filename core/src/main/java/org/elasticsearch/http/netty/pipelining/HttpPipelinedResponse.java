@@ -1,5 +1,4 @@
 package org.elasticsearch.http.netty.pipelining;
-
 /*
  * Licensed to Elasticsearch under one or more contributor
  * license agreements. See the NOTICE file distributed with
@@ -19,29 +18,35 @@ package org.elasticsearch.http.netty.pipelining;
  * under the License.
  */
 
-// this file is from netty-http-pipelining, under apache 2.0 license
-// see github.com/typesafehub/netty-http-pipelining
+import io.netty.channel.ChannelPromise;
+import io.netty.handler.codec.http.HttpResponse;
 
-import org.jboss.netty.channel.Channel;
-import org.jboss.netty.channel.UpstreamMessageEvent;
+public class HttpPipelinedResponse implements Comparable<HttpPipelinedResponse> {
 
-import java.net.SocketAddress;
+    private final HttpResponse response;
+    private final ChannelPromise promise;
+    private final int sequenceId;
 
-/**
- * Permits upstream message events to be ordered.
- *
- * @author Christopher Hunt
- */
-public class OrderedUpstreamMessageEvent extends UpstreamMessageEvent {
-    final int sequence;
-
-    public OrderedUpstreamMessageEvent(final int sequence, final Channel channel, final Object msg, final SocketAddress remoteAddress) {
-        super(channel, msg, remoteAddress);
-        this.sequence = sequence;
+    public HttpPipelinedResponse(HttpResponse response, ChannelPromise promise, int sequenceId) {
+        this.response = response;
+        this.promise = promise;
+        this.sequenceId = sequenceId;
     }
 
-    public int getSequence() {
-        return sequence;
+    public int getSequenceId() {
+        return sequenceId;
     }
 
+    public HttpResponse getResponse() {
+        return response;
+    }
+
+    public ChannelPromise getPromise() {
+        return promise;
+    }
+
+    @Override
+    public int compareTo(HttpPipelinedResponse other) {
+        return this.sequenceId - other.getSequenceId();
+    }
 }

@@ -19,6 +19,7 @@
 
 package org.elasticsearch.http.netty;
 
+import io.netty.handler.codec.http.HttpMethod;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.network.NetworkService;
 import org.elasticsearch.common.settings.Settings;
@@ -28,7 +29,6 @@ import org.elasticsearch.indices.breaker.NoneCircuitBreakerService;
 import org.elasticsearch.test.ESTestCase;
 import org.elasticsearch.threadpool.TestThreadPool;
 import org.elasticsearch.threadpool.ThreadPool;
-import org.jboss.netty.handler.codec.http.HttpMethod;
 import org.junit.After;
 import org.junit.Before;
 
@@ -83,7 +83,7 @@ public class NettyHttpServerTransportTests extends ESTestCase {
         final CorsConfig corsConfig = transport.getCorsConfig();
         assertThat(corsConfig.isAnyOriginSupported(), equalTo(true));
         assertThat(corsConfig.allowedRequestHeaders(), equalTo(headers));
-        assertThat(corsConfig.allowedRequestMethods().stream().map(HttpMethod::getName).collect(Collectors.toSet()), equalTo(methods));
+        assertThat(corsConfig.allowedRequestMethods().stream().map(HttpMethod::name).collect(Collectors.toSet()), equalTo(methods));
         transport.close();
     }
 }

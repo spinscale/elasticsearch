@@ -22,6 +22,7 @@ package org.elasticsearch.discovery.ec2;
 import com.amazonaws.util.IOUtils;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpServer;
+import io.netty.handler.codec.http.QueryStringDecoder;
 import org.elasticsearch.cloud.aws.AwsEc2Service;
 import org.elasticsearch.common.SuppressForbidden;
 import org.elasticsearch.common.io.FileSystemUtils;
@@ -30,7 +31,6 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.plugin.discovery.ec2.Ec2DiscoveryPlugin;
 import org.elasticsearch.plugins.Plugin;
 import org.elasticsearch.test.ESIntegTestCase;
-import org.jboss.netty.handler.codec.http.QueryStringDecoder;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 
@@ -102,7 +102,7 @@ public class Ec2DiscoveryClusterFormationTests extends ESIntegTestCase {
             Headers headers = s.getResponseHeaders();
             headers.add("Content-Type", "text/xml; charset=UTF-8");
             QueryStringDecoder decoder = new QueryStringDecoder("?" + IOUtils.toString(s.getRequestBody()));
-            Map<String, List<String>> queryParams = decoder.getParameters();
+            Map<String, List<String>> queryParams = decoder.parameters();
             String action = queryParams.get("Action").get(0);
             assertThat(action, equalTo("DescribeInstances"));
 

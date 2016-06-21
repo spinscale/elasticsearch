@@ -19,18 +19,18 @@
 
 package org.elasticsearch.transport.netty;
 
+import io.netty.buffer.ByteBuf;
 import org.elasticsearch.common.io.stream.StreamInput;
-import org.jboss.netty.buffer.ChannelBuffer;
 
 /**
  */
-public class ChannelBufferStreamInputFactory {
+public class ByteBufStreamInputFactory {
 
-    public static StreamInput create(ChannelBuffer buffer) {
-        return new ChannelBufferStreamInput(buffer, buffer.readableBytes());
+    public static StreamInput create(ByteBuf buffer) {
+        return new ByteBufStreamInput(buffer, buffer.readableBytes());
     }
 
-    public static StreamInput create(ChannelBuffer buffer, int size) {
-        return new ChannelBufferStreamInput(buffer, size);
+    public static StreamInput create(ByteBuf buffer, int size) {
+        return new ByteBufStreamInput(buffer, size);
     }
 }

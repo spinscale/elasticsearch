@@ -19,6 +19,21 @@
 
 package org.elasticsearch.http.netty;
 
+import io.netty.buffer.ByteBuf;
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelFutureListener;
+import io.netty.channel.ChannelPromise;
+import io.netty.handler.codec.http.DefaultFullHttpResponse;
+import io.netty.handler.codec.http.HttpHeaderNames;
+import io.netty.handler.codec.http.HttpHeaders;
+import io.netty.handler.codec.http.HttpRequest;
+import io.netty.handler.codec.http.HttpResponse;
+import io.netty.handler.codec.http.HttpResponseStatus;
+import io.netty.handler.codec.http.HttpVersion;
+import io.netty.handler.codec.http.cookie.Cookie;
+import io.netty.handler.codec.http.cookie.ServerCookieDecoder;
+import io.netty.handler.codec.http.cookie.ServerCookieEncoder;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.io.stream.BytesStreamOutput;
@@ -26,23 +41,10 @@ import org.elasticsearch.common.io.stream.ReleasableBytesStreamOutput;
 import org.elasticsearch.common.lease.Releasable;
 import org.elasticsearch.common.netty.ReleaseChannelFutureListener;
 import org.elasticsearch.http.netty.cors.CorsHandler;
-import org.elasticsearch.http.netty.pipelining.OrderedDownstreamChannelEvent;
-import org.elasticsearch.http.netty.pipelining.OrderedUpstreamMessageEvent;
+import org.elasticsearch.http.netty.pipelining.HttpPipelinedRequest;
 import org.elasticsearch.rest.AbstractRestChannel;
 import org.elasticsearch.rest.RestResponse;
 import org.elasticsearch.rest.RestStatus;
-import org.jboss.netty.buffer.ChannelBuffer;
-import org.jboss.netty.channel.Channel;
-import org.jboss.netty.channel.ChannelFuture;
-import org.jboss.netty.channel.ChannelFutureListener;
-import org.jboss.netty.handler.codec.http.Cookie;
-import org.jboss.netty.handler.codec.http.CookieDecoder;
-import org.jboss.netty.handler.codec.http.CookieEncoder;
-import org.jboss.netty.handler.codec.http.DefaultHttpResponse;
-import org.jboss.netty.handler.codec.http.HttpHeaders;
-import org.jboss.netty.handler.codec.http.HttpResponse;
-import org.jboss.netty.handler.codec.http.HttpResponseStatus;
-import org.jboss.netty.handler.codec.http.HttpVersion;
 
 import java.util.Collections;
 import java.util.EnumMap;
@@ -50,32 +52,32 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import static org.jboss.netty.handler.codec.http.HttpHeaders.Names.CONNECTION;
-import static org.jboss.netty.handler.codec.http.HttpHeaders.Values.CLOSE;
-import static org.jboss.netty.handler.codec.http.HttpHeaders.Values.KEEP_ALIVE;
+import static io.netty.handler.codec.http.HttpHeaders.Names.CONNECTION;
+import static io.netty.handler.codec.http.HttpHeaders.Values.CLOSE;
+import static io.netty.handler.codec.http.HttpHeaders.Values.KEEP_ALIVE;
 
 public final class NettyHttpChannel extends AbstractRestChannel {
 
     private final NettyHttpServerTransport transport;
     private final Channel channel;
-    private final org.jboss.netty.handler.codec.http.HttpRequest nettyRequest;
-    private final OrderedUpstreamMessageEvent orderedUpstreamMessageEvent;
+    private final HttpRequest nettyRequest;
+    private final HttpPipelinedRequest pipelinedRequest;
 
     /**
      * @param transport                   The corresponding <code>NettyHttpServerTransport</code> where this channel belongs to.
      * @param request                     The request that is handled by this channel.
-     * @param orderedUpstreamMessageEvent If HTTP pipelining is enabled provide the corresponding Netty upstream event. May be null if
+     * @param pipelinedRequest            If HTTP pipelining is enabled provide the corresponding pipelined request. May be null if
      *                                    HTTP pipelining is disabled.
      * @param detailedErrorsEnabled       true iff error messages should include stack traces.
      */
     public NettyHttpChannel(NettyHttpServerTransport transport, NettyHttpRequest request,
-                            @Nullable OrderedUpstreamMessageEvent orderedUpstreamMessageEvent,
+                            @Nullable HttpPipelinedRequest pipelinedRequest,
                             boolean detailedErrorsEnabled) {
         super(request, detailedErrorsEnabled);
         this.transport = transport;
         this.channel = request.getChannel();
         this.nettyRequest = request.request();
-        this.orderedUpstreamMessageEvent = orderedUpstreamMessageEvent;
+        this.pipelinedRequest = pipelinedRequest;
     }
 
     @Override
@@ -88,7 +90,8 @@ public final class NettyHttpChannel extends AbstractRestChannel {
     public void sendResponse(RestResponse response) {
         // if the response object was created upstream, then use it;
         // otherwise, create a new one
-        HttpResponse resp = newResponse();
+        ByteBuf buffer = response.content().toByteBuf();
+        HttpResponse resp = newResponse(buffer);
         resp.setStatus(getStatus(response.status()));
 
         CorsHandler.setCorsResponseHeaders(nettyRequest, resp, transport.getCorsConfig());
@@ -102,39 +105,30 @@ public final class NettyHttpChannel extends AbstractRestChannel {
         addCustomHeaders(response, resp);
 
         BytesReference content = response.content();
-        ChannelBuffer buffer;
         boolean addedReleaseListener = false;
         try {
-            buffer = content.toChannelBuffer();
-            resp.setContent(buffer);
-
             // If our response doesn't specify a content-type header, set one
-            setHeaderField(resp, HttpHeaders.Names.CONTENT_TYPE, response.contentType(), false);
+            setHeaderField(resp, HttpHeaderNames.CONTENT_TYPE.toString(), response.contentType(), false);
             // If our response has no content-length, calculate and set one
-            setHeaderField(resp, HttpHeaders.Names.CONTENT_LENGTH, String.valueOf(buffer.readableBytes()), false);
+            setHeaderField(resp, HttpHeaderNames.CONTENT_LENGTH.toString(), String.valueOf(buffer.readableBytes()), false);
 
             addCookies(resp);
 
-            ChannelFuture future;
-
-            if (orderedUpstreamMessageEvent != null) {
-                OrderedDownstreamChannelEvent downstreamChannelEvent =
-                    new OrderedDownstreamChannelEvent(orderedUpstreamMessageEvent, 0, true, resp);
-                future = downstreamChannelEvent.getFuture();
-                channel.getPipeline().sendDownstream(downstreamChannelEvent);
-            } else {
-                future = channel.write(resp);
-            }
-
+            ChannelPromise channelPromise = channel.newPromise();
             if (content instanceof Releasable) {
-                future.addListener(new ReleaseChannelFutureListener((Releasable) content));
+                channelPromise.addListener(new ReleaseChannelFutureListener((Releasable) content));
                 addedReleaseListener = true;
             }
 
             if (isCloseConnection()) {
-                future.addListener(ChannelFutureListener.CLOSE);
+                channelPromise.addListener(ChannelFutureListener.CLOSE);
             }
 
+            if (pipelinedRequest != null) {
+                channel.writeAndFlush(pipelinedRequest.createHttpResponse(resp, channelPromise));
+            } else {
+                channel.writeAndFlush(resp, channelPromise);
+            }
         } finally {
             if (!addedReleaseListener && content instanceof Releasable) {
                 ((Releasable) content).close();
@@ -156,15 +150,10 @@ public final class NettyHttpChannel extends AbstractRestChannel {
         if (transport.resetCookies) {
             String cookieString = nettyRequest.headers().get(HttpHeaders.Names.COOKIE);
             if (cookieString != null) {
-                CookieDecoder cookieDecoder = new CookieDecoder();
-                Set<Cookie> cookies = cookieDecoder.decode(cookieString);
+                Set<Cookie> cookies = ServerCookieDecoder.STRICT.decode(cookieString);
                 if (!cookies.isEmpty()) {
                     // Reset the cookies if necessary.
-                    CookieEncoder cookieEncoder = new CookieEncoder(true);
-                    for (Cookie cookie : cookies) {
-                        cookieEncoder.addCookie(cookie);
-                    }
-                    setHeaderField(resp, HttpHeaders.Names.SET_COOKIE, cookieEncoder.encode());
+                    resp.headers().set(HttpHeaderNames.SET_COOKIE, ServerCookieEncoder.STRICT.encode(cookies));
                 }
             }
         }
@@ -194,19 +183,19 @@ public final class NettyHttpChannel extends AbstractRestChannel {
     }
 
     // Create a new {@link HttpResponse} to transmit the response for the netty request.
-    private HttpResponse newResponse() {
+    private HttpResponse newResponse(ByteBuf content) {
         final boolean http10 = isHttp10();
         final boolean close = isCloseConnection();
         // Build the response object.
         HttpResponseStatus status = HttpResponseStatus.OK; // default to initialize
-        org.jboss.netty.handler.codec.http.HttpResponse resp;
+        HttpResponse resp;
         if (http10) {
-            resp = new DefaultHttpResponse(HttpVersion.HTTP_1_0, status);
+            resp = new DefaultFullHttpResponse(HttpVersion.HTTP_1_0, status, content);
             if (!close) {
                 resp.headers().add(CONNECTION, "Keep-Alive");
             }
         } else {
-            resp = new DefaultHttpResponse(HttpVersion.HTTP_1_1, status);
+            resp = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, status, content);
         }
         return resp;
     }

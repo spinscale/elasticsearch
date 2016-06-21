@@ -19,6 +19,7 @@
 
 package org.elasticsearch.common.compress.deflate;
 
+import io.netty.buffer.ByteBuf;
 import org.apache.lucene.store.IndexInput;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.compress.CompressedIndexInput;
@@ -27,7 +28,6 @@ import org.elasticsearch.common.io.stream.InputStreamStreamInput;
 import org.elasticsearch.common.io.stream.OutputStreamStreamOutput;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
-import org.jboss.netty.buffer.ChannelBuffer;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -70,7 +70,7 @@ public class DeflateCompressor implements Compressor {
     }
 
     @Override
-    public boolean isCompressed(ChannelBuffer buffer) {
+    public boolean isCompressed(ByteBuf buffer) {
         if (buffer.readableBytes() < HEADER.length) {
             return false;
         }

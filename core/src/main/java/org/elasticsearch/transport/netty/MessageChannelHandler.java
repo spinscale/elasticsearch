@@ -19,6 +19,13 @@
 
 package org.elasticsearch.transport.netty;
 
+import io.netty.buffer.ByteBuf;
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelInboundHandlerAdapter;
+import io.netty.channel.ChannelProgressiveFuture;
+import io.netty.channel.ChannelProgressiveFutureListener;
+import io.netty.channel.ChannelProgressivePromise;
 import org.apache.lucene.util.IOUtils;
 import org.elasticsearch.Version;
 import org.elasticsearch.common.component.Lifecycle;
@@ -43,13 +50,6 @@ import org.elasticsearch.transport.TransportSerializationException;
 import org.elasticsearch.transport.TransportServiceAdapter;
 import org.elasticsearch.transport.Transports;
 import org.elasticsearch.transport.support.TransportStatus;
-import org.jboss.netty.buffer.ChannelBuffer;
-import org.jboss.netty.channel.Channel;
-import org.jboss.netty.channel.ChannelHandlerContext;
-import org.jboss.netty.channel.ExceptionEvent;
-import org.jboss.netty.channel.MessageEvent;
-import org.jboss.netty.channel.SimpleChannelUpstreamHandler;
-import org.jboss.netty.channel.WriteCompletionEvent;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -58,7 +58,7 @@ import java.net.InetSocketAddress;
  * A handler (must be the last one!) that does size based frame decoding and forwards the actual message
  * to the relevant action.
  */
-public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
+public class MessageChannelHandler extends ChannelInboundHandlerAdapter {
 
     protected final ESLogger logger;
     protected final ThreadPool threadPool;
@@ -76,21 +76,17 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
         this.profileName = profileName;
     }
 
-    @Override
-    public void writeComplete(ChannelHandlerContext ctx, WriteCompletionEvent e) throws Exception {
-        transportServiceAdapter.sent(e.getWrittenAmount());
-        super.writeComplete(ctx, e);
-    }
+    // TODO FIXME
+//    @Override
+//    public void writeComplete(ChannelHandlerContext ctx, WriteCompletionEvent e) throws Exception {
+//        transportServiceAdapter.sent(e.getWrittenAmount());
+//        super.writeComplete(ctx, e);
+//    }
 
     @Override
-    public void messageReceived(ChannelHandlerContext ctx, MessageEvent e) throws Exception {
+    public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+        ByteBuf buffer = (ByteBuf) msg;
         Transports.assertTransportThread();
-        Object m = e.getMessage();
-        if (!(m instanceof ChannelBuffer)) {
-            ctx.sendUpstream(e);
-            return;
-        }
-        ChannelBuffer buffer = (ChannelBuffer) m;
         Marker marker = new Marker(buffer);
         int size = marker.messageSizeWithRemainingHeaders();
         transportServiceAdapter.received(marker.messageSizeWithAllHeaders());
@@ -100,14 +96,14 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
 
         // netty always copies a buffer, either in NioWorker in its read handler, where it copies to a fresh
         // buffer, or in the cumulation buffer, which is cleaned each time
-        StreamInput streamIn = ChannelBufferStreamInputFactory.create(buffer, size);
+        StreamInput streamIn = ByteBufStreamInputFactory.create(buffer, size);
         boolean success = false;
         try (ThreadContext.StoredContext tCtx = threadContext.stashContext()) {
             long requestId = streamIn.readLong();
             byte status = streamIn.readByte();
             Version version = Version.fromId(streamIn.readInt());
 
-            if (TransportStatus.isCompress(status) && hasMessageBytesToRead && buffer.readable()) {
+            if (TransportStatus.isCompress(status) && hasMessageBytesToRead && buffer.isReadable()) {
                 Compressor compressor;
                 try {
                     compressor = CompressorFactory.compressor(buffer);
@@ -132,7 +128,7 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
             streamIn.setVersion(version);
             if (TransportStatus.isRequest(status)) {
                 threadContext.readHeaders(streamIn);
-                handleRequest(ctx.getChannel(), marker, streamIn, requestId, size, version);
+                handleRequest(ctx.channel(), marker, streamIn, requestId, size, version);
             } else {
                 TransportResponseHandler<?> handler = transportServiceAdapter.onResponseReceived(requestId);
                 // ignore if its null, the adapter logs it
@@ -140,7 +136,7 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
                     if (TransportStatus.isError(status)) {
                         handlerResponseError(streamIn, handler);
                     } else {
-                        handleResponse(ctx.getChannel(), streamIn, handler);
+                        handleResponse(ctx.channel(), streamIn, handler);
                     }
                     marker.validateResponse(streamIn, requestId, handler, TransportStatus.isError(status));
                 }
@@ -160,13 +156,13 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
         }
     }
 
-    protected void handleResponse(Channel channel, StreamInput buffer, final TransportResponseHandler handler) {
-        buffer = new NamedWriteableAwareStreamInput(buffer, transport.namedWriteableRegistry);
+    protected void handleResponse(Channel channel, StreamInput streamInput, final TransportResponseHandler handler) {
+        streamInput = new NamedWriteableAwareStreamInput(streamInput, transport.namedWriteableRegistry);
         final TransportResponse response = handler.newInstance();
-        response.remoteAddress(new InetSocketTransportAddress((InetSocketAddress) channel.getRemoteAddress()));
+        response.remoteAddress(new InetSocketTransportAddress((InetSocketAddress) channel.remoteAddress()));
         response.remoteAddress();
         try {
-            response.readFrom(buffer);
+            response.readFrom(streamInput);
         } catch (Throwable e) {
             handleException(handler, new TransportSerializationException(
                     "Failed to deserialize response of type [" + response.getClass().getName() + "]", e));
@@ -219,10 +215,28 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
         }
     }
 
-    protected String handleRequest(Channel channel, Marker marker, StreamInput buffer, long requestId, int messageLengthBytes,
+    protected String handleRequest(Channel channel, Marker marker, StreamInput streamInput, long requestId, int messageLengthBytes,
                                    Version version) throws IOException {
-        buffer = new NamedWriteableAwareStreamInput(buffer, transport.namedWriteableRegistry);
-        final String action = buffer.readString();
+        streamInput = new NamedWriteableAwareStreamInput(streamInput, transport.namedWriteableRegistry);
+        final String action = streamInput.readString();
+
+        ChannelProgressivePromise progressPromise = channel.newProgressivePromise();
+        progressPromise.addListener(new ChannelProgressiveFutureListener() {
+            private volatile long writtenAmount;
+
+            @Override
+            public void operationComplete(ChannelProgressiveFuture future) throws Exception {
+                if (future.isDone() && future.isSuccess()) {
+                    transportServiceAdapter.sent(writtenAmount);
+                }
+            }
+
+            @Override
+            public void operationProgressed(ChannelProgressiveFuture future, long progress, long total) throws Exception {
+                writtenAmount = progress;
+            }
+        });
+
         transportServiceAdapter.onRequestReceived(requestId, action);
         NettyTransportChannel transportChannel = null;
         try {
@@ -238,10 +252,10 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
             transportChannel = new NettyTransportChannel(transport, transportServiceAdapter, action, channel,
                 requestId, version, profileName, messageLengthBytes);
             final TransportRequest request = reg.newRequest();
-            request.remoteAddress(new InetSocketTransportAddress((InetSocketAddress) channel.getRemoteAddress()));
-            request.readFrom(buffer);
+            request.remoteAddress(new InetSocketTransportAddress((InetSocketAddress) channel.remoteAddress()));
+            request.readFrom(streamInput);
             // in case we throw an exception, i.e. when the limit is hit, we don't want to verify
-            validateRequest(marker, buffer, requestId, action);
+            validateRequest(marker, streamInput, requestId, action);
             if (ThreadPool.Names.SAME.equals(reg.getExecutor())) {
                 //noinspection unchecked
                 reg.processMessageReceived(request, transportChannel);
@@ -269,9 +283,8 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
         marker.validateRequest(buffer, requestId, action);
     }
 
-
     @Override
-    public void exceptionCaught(ChannelHandlerContext ctx, ExceptionEvent e) throws Exception {
+    public void exceptionCaught(ChannelHandlerContext ctx, Throwable e) throws Exception {
         transport.exceptionCaught(ctx, e);
     }
 
@@ -336,11 +349,11 @@ public class MessageChannelHandler extends SimpleChannelUpstreamHandler {
      * Internal helper class to store characteristic offsets of a buffer during processing
      */
     protected static final class Marker {
-        private final ChannelBuffer buffer;
+        private final ByteBuf buffer;
         private final int remainingMessageSize;
         private final int expectedReaderIndex;
 
-        public Marker(ChannelBuffer buffer) {
+        public Marker(ByteBuf buffer) {
             this.buffer = buffer;
             // when this constructor is called, we have read already two parts of the message header: the marker bytes and the message
             // message length (see SizeHeaderFrameDecoder). Hence we have to rewind the index for MESSAGE_LENGTH_SIZE bytes to read the

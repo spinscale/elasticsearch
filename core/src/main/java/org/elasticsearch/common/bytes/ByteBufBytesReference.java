@@ -18,11 +18,11 @@
  */
 package org.elasticsearch.common.bytes;
 
+import io.netty.buffer.ByteBuf;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.io.Channels;
 import org.elasticsearch.common.io.stream.StreamInput;
-import org.elasticsearch.transport.netty.ChannelBufferStreamInputFactory;
-import org.jboss.netty.buffer.ChannelBuffer;
+import org.elasticsearch.transport.netty.ByteBufStreamInputFactory;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -31,12 +31,12 @@ import java.nio.charset.StandardCharsets;
 
 /**
  */
-public class ChannelBufferBytesReference implements BytesReference {
+public class ByteBufBytesReference implements BytesReference {
 
-    private final ChannelBuffer buffer;
+    private final ByteBuf buffer;
 
-    public ChannelBufferBytesReference(ChannelBuffer buffer) {
-        this.buffer = buffer;
+    public ByteBufBytesReference(ByteBuf buffer, boolean retain) {
+        this.buffer = retain ? buffer.retain() : buffer;
     }
 
     @Override
@@ -51,12 +51,12 @@ public class ChannelBufferBytesReference implements BytesReference {
 
     @Override
     public BytesReference slice(int from, int length) {
-        return new ChannelBufferBytesReference(buffer.slice(from, length));
+        return new ByteBufBytesReference(buffer.slice(from, length), false);
     }
 
     @Override
     public StreamInput streamInput() {
-        return ChannelBufferStreamInputFactory.create(buffer.duplicate());
+        return ByteBufStreamInputFactory.create(buffer.duplicate());
     }
 
     @Override
@@ -90,7 +90,7 @@ public class ChannelBufferBytesReference implements BytesReference {
     }
 
     @Override
-    public ChannelBuffer toChannelBuffer() {
+    public ByteBuf toByteBuf() {
         return buffer.duplicate();
     }
 
