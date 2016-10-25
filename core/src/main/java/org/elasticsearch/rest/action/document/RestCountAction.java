@@ -98,6 +98,8 @@ public class RestCountAction extends BaseRestHandler {
                 if (terminateAfter != DEFAULT_TERMINATE_AFTER) {
                     builder.field("terminated_early", response.isTerminatedEarly());
                 }
+                builder.field("took", response.getTookInMillis());
+                builder.field("timed_out", response.isTimedOut());
                 builder.field("count", response.getHits().totalHits());
                 buildBroadcastShardsHeader(builder, request, response.getTotalShards(), response.getSuccessfulShards(),
                         response.getFailedShards(), response.getShardFailures());

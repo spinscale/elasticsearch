@@ -25,6 +25,8 @@ setup:
               foo: bar
 
   - match: {count : 1}
+  - is_false: timed_out
+  - gte: { took: 0 }
 
   - do:
       count:
@@ -36,6 +38,8 @@ setup:
               foo: test
 
   - match: {count : 0}
+  - is_false: timed_out
+  - gte: { took: 0 }
 
 ---
 "count with empty body":
@@ -54,6 +58,8 @@ setup:
         type: test
 
   - match: {count : 1}
+  - is_false: timed_out
+  - gte: { took: 0 }
 
 ---
 "count body without query element":
