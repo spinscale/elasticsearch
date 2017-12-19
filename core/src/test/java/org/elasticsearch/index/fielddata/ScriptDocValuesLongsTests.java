@@ -21,11 +21,10 @@ package org.elasticsearch.index.fielddata;
 
 import org.elasticsearch.index.fielddata.ScriptDocValues.Longs;
 import org.elasticsearch.test.ESTestCase;
-import org.joda.time.DateTime;
-import org.joda.time.DateTimeZone;
-import org.joda.time.ReadableDateTime;
 
 import java.io.IOException;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 
 public class ScriptDocValuesLongsTests extends ESTestCase {
@@ -58,13 +57,13 @@ public class ScriptDocValuesLongsTests extends ESTestCase {
 
     public void testDates() throws IOException {
         long[][] values = new long[between(3, 10)][];
-        ReadableDateTime[][] dates = new ReadableDateTime[values.length][];
+        ZonedDateTime[][] dates = new ZonedDateTime[values.length][];
         for (int d = 0; d < values.length; d++) {
             values[d] = new long[randomBoolean() ? randomBoolean() ? 0 : 1 : between(2, 100)];
-            dates[d] = new ReadableDateTime[values[d].length];
+            dates[d] = new ZonedDateTime[values[d].length];
             for (int i = 0; i < values[d].length; i++) {
-                dates[d][i] = new DateTime(randomNonNegativeLong(), DateTimeZone.UTC);
-                values[d][i] = dates[d][i].getMillis();
+                dates[d][i] = ZonedDateTime.ofInstant(Instant.ofEpochMilli(randomNonNegativeLong()), ZoneOffset.UTC);
+                values[d][i] = dates[d][i].toInstant().toEpochMilli();
             }
         }
         Longs longs = wrap(values);
@@ -72,7 +71,8 @@ public class ScriptDocValuesLongsTests extends ESTestCase {
         for (int round = 0; round < 10; round++) {
             int d = between(0, values.length - 1);
             longs.setNextDocId(d);
-            assertEquals(dates[d].length > 0 ? dates[d][0] : new DateTime(0, DateTimeZone.UTC), longs.getDate());
+            ZonedDateTime dateTime = ZonedDateTime.ofInstant(Instant.ofEpochMilli(0), ZoneOffset.UTC);
+            assertEquals(dates[d].length > 0 ? dates[d][0] : dateTime, longs.getDate());
 
             assertEquals(values[d].length, longs.getDates().size());
             for (int i = 0; i < values[d].length; i++) {
