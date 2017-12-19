@@ -108,6 +108,8 @@ import java.io.IOException;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -808,7 +810,7 @@ public abstract class AbstractQueryTestCase<QB extends AbstractQueryBuilder<QB>>
                 value = randomBoolean();
                 break;
             case DATE_FIELD_NAME:
-                value = new DateTime(System.currentTimeMillis(), DateTimeZone.UTC).toString();
+                value = ZonedDateTime.now(ZoneOffset.UTC).toString();
                 break;
             default:
                 value = randomAlphaOfLengthBetween(1, 10);

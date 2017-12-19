@@ -160,7 +160,7 @@ public class QueryStringQueryBuilderTests extends AbstractQueryTestCase<QueryStr
             queryStringQueryBuilder.useDisMax(randomBoolean());
         }
         if (randomBoolean()) {
-            queryStringQueryBuilder.timeZone(randomDateTimeZone().getID());
+            queryStringQueryBuilder.timeZone(randomTimeZone().getID());
         }
         if (randomBoolean()) {
             queryStringQueryBuilder.autoGenerateSynonymsPhraseQuery(randomBoolean());
