@@ -19,7 +19,6 @@
 
 package org.elasticsearch.search.fields;
 
-import org.elasticsearch.Version;
 import org.elasticsearch.action.index.IndexRequestBuilder;
 import org.elasticsearch.action.search.SearchRequestBuilder;
 import org.elasticsearch.action.search.SearchResponse;
@@ -47,8 +46,10 @@ import org.elasticsearch.test.ESIntegTestCase;
 import org.elasticsearch.test.InternalSettingsPlugin;
 import org.joda.time.DateTime;
 import org.joda.time.DateTimeZone;
-import org.joda.time.ReadableDateTime;
 
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
@@ -109,7 +110,7 @@ public class SearchFieldsIT extends ESIntegTestCase {
             scripts.put("doc['date'].date.millis", vars -> {
                 Map<?, ?> doc = (Map) vars.get("doc");
                 ScriptDocValues.Dates dates = (ScriptDocValues.Dates) doc.get("date");
-                return dates.getValue().getMillis();
+                return dates.getValue().toInstant().toEpochMilli();
             });
 
             scripts.put("_fields['num1'].value", vars -> fieldsScript(vars, "num1"));
@@ -773,7 +774,7 @@ public class SearchFieldsIT extends ESIntegTestCase {
 
         client().admin().indices().preparePutMapping().setType("type1").setSource(mapping, XContentType.JSON).execute().actionGet();
 
-        ReadableDateTime date = new DateTime(2012, 3, 22, 0, 0, DateTimeZone.UTC);
+        ZonedDateTime date = ZonedDateTime.of(2012, 3, 22, 0, 0,0, 0, ZoneOffset.UTC);
         client().prepareIndex("test", "type1", "1").setSource(jsonBuilder().startObject()
                 .field("text_field", "foo")
                 .field("keyword_field", "foo")
@@ -783,7 +784,7 @@ public class SearchFieldsIT extends ESIntegTestCase {
                 .field("long_field", 4L)
                 .field("float_field", 5.0f)
                 .field("double_field", 6.0d)
-                .field("date_field", Joda.forPattern("dateOptionalTime").printer().print(date))
+                .field("date_field", DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(date))
                 .field("boolean_field", true)
                 .field("ip_field", "::1")
                 .endObject()).execute().actionGet();

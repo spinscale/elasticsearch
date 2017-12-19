@@ -26,6 +26,7 @@ import org.joda.time.DateTimeZone;
 import org.joda.time.ReadableDateTime;
 
 import java.io.IOException;
+import java.time.ZonedDateTime;
 
 public class ScriptDocValuesDatesTests extends ESTestCase {
     public void test() throws IOException {
@@ -51,7 +52,7 @@ public class ScriptDocValuesDatesTests extends ESTestCase {
                 assertEquals(expectedDates[d][i], dates.get(i));
             }
 
-            Exception e = expectThrows(UnsupportedOperationException.class, () -> dates.add(new DateTime()));
+            Exception e = expectThrows(UnsupportedOperationException.class, () -> dates.add(ZonedDateTime.now()));
             assertEquals("doc values are unmodifiable", e.getMessage());
         }
     }

@@ -35,6 +35,9 @@ import org.joda.time.MutableDateTime;
 import org.joda.time.ReadableDateTime;
 
 import java.io.IOException;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.AbstractList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -46,7 +49,7 @@ import java.util.function.UnaryOperator;
  * Script level doc values, the assumption is that any implementation will
  * implement a <code>getValue</code> and a <code>getValues</code> that return
  * the relevant type that then can be used in scripts.
- * 
+ *
  * Implementations should not internally re-use objects for the values that they
  * return as a single {@link ScriptDocValues} instance can be reused to return
  * values form multiple documents.
@@ -141,7 +144,7 @@ public abstract class ScriptDocValues<T> extends AbstractList<T> {
         }
 
         @Deprecated
-        public ReadableDateTime getDate() throws IOException {
+        public ZonedDateTime getDate() throws IOException {
             deprecationLogger.deprecated("getDate on numeric fields is deprecated. Use a date field to get dates.");
             if (dates == null) {
                 dates = new Dates(in);
@@ -151,7 +154,7 @@ public abstract class ScriptDocValues<T> extends AbstractList<T> {
         }
 
         @Deprecated
-        public List<ReadableDateTime> getDates() throws IOException {
+        public List<ZonedDateTime> getDates() throws IOException {
             deprecationLogger.deprecated("getDates on numeric fields is deprecated. Use a date field to get dates.");
             if (dates == null) {
                 dates = new Dates(in);
@@ -171,17 +174,18 @@ public abstract class ScriptDocValues<T> extends AbstractList<T> {
         }
     }
 
-    public static final class Dates extends ScriptDocValues<ReadableDateTime> {
+    public static final class Dates extends ScriptDocValues<ZonedDateTime> {
         protected static final DeprecationLogger deprecationLogger = new DeprecationLogger(ESLoggerFactory.getLogger(Dates.class));
 
-        private static final ReadableDateTime EPOCH = new DateTime(0, DateTimeZone.UTC);
+
+        private static final ZonedDateTime EPOCH = ZonedDateTime.ofInstant(Instant.ofEpochSecond(0), ZoneOffset.UTC);
 
         private final SortedNumericDocValues in;
         /**
          * Values wrapped in {@link MutableDateTime}. Null by default an allocated on first usage so we allocate a reasonably size. We keep
          * this array so we don't have allocate new {@link MutableDateTime}s on every usage. Instead we reuse them for every document.
          */
-        private MutableDateTime[] dates;
+        private ZonedDateTime[] dates;
         private int count;
 
         public Dates(SortedNumericDocValues in) {
@@ -192,7 +196,7 @@ public abstract class ScriptDocValues<T> extends AbstractList<T> {
          * Fetch the first field value or 0 millis after epoch if there are no
          * in.
          */
-        public ReadableDateTime getValue() {
+        public ZonedDateTime getValue() {
             if (count == 0) {
                 return EPOCH;
             }
@@ -203,7 +207,7 @@ public abstract class ScriptDocValues<T> extends AbstractList<T> {
          * Fetch the first value. Added for backwards compatibility with 5.x when date fields were {@link Longs}.
          */
         @Deprecated
-        public ReadableDateTime getDate() {
+        public ZonedDateTime getDate() {
             deprecationLogger.deprecated("getDate is no longer necessary on date fields as the value is now a date.");
             return getValue();
         }
@@ -212,13 +216,13 @@ public abstract class ScriptDocValues<T> extends AbstractList<T> {
          * Fetch all the values. Added for backwards compatibility with 5.x when date fields were {@link Longs}.
          */
         @Deprecated
-        public List<ReadableDateTime> getDates() {
+        public List<ZonedDateTime> getDates() {
             deprecationLogger.deprecated("getDates is no longer necessary on date fields as the values are now dates.");
             return this;
         }
 
         @Override
-        public ReadableDateTime get(int index) {
+        public ZonedDateTime get(int index) {
             if (index >= count) {
                 throw new IndexOutOfBoundsException(
                         "attempted to fetch the [" + index + "] date when there are only ["
@@ -251,27 +255,28 @@ public abstract class ScriptDocValues<T> extends AbstractList<T> {
             }
             if (dates == null) {
                 // Happens for the document. We delay allocating dates so we can allocate it with a reasonable size.
-                dates = new MutableDateTime[count];
+                dates = new ZonedDateTime[count];
                 for (int i = 0; i < dates.length; i++) {
-                    dates[i] = new MutableDateTime(in.nextValue(), DateTimeZone.UTC);
+
+                    dates[i] = ZonedDateTime.ofInstant(Instant.ofEpochMilli(in.nextValue()), ZoneOffset.UTC);
                 }
                 return;
             }
             if (count > dates.length) {
                 // Happens when we move to a new document and it has more dates than any documents before it.
-                MutableDateTime[] backup = dates;
-                dates = new MutableDateTime[count];
+                ZonedDateTime[] backup = dates;
+                dates = new ZonedDateTime[count];
                 System.arraycopy(backup, 0, dates, 0, backup.length);
                 for (int i = 0; i < backup.length; i++) {
-                    dates[i].setMillis(in.nextValue());
+                    dates[i] = ZonedDateTime.ofInstant(Instant.ofEpochMilli(in.nextValue()), ZoneOffset.UTC);
                 }
                 for (int i = backup.length; i < dates.length; i++) {
-                    dates[i] = new MutableDateTime(in.nextValue(), DateTimeZone.UTC);
+                    dates[i] = ZonedDateTime.ofInstant(Instant.ofEpochMilli(in.nextValue()), ZoneOffset.UTC);
                 }
                 return;
             }
             for (int i = 0; i < count; i++) {
-                dates[i] = new MutableDateTime(in.nextValue(), DateTimeZone.UTC);
+                dates[i] = ZonedDateTime.ofInstant(Instant.ofEpochMilli(in.nextValue()), ZoneOffset.UTC);
             }
         }
     }
