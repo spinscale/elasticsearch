@@ -74,15 +74,15 @@ class org.elasticsearch.index.fielddata.ScriptDocValues$Longs {
   Long get(int)
   long getValue()
   List getValues()
-  org.joda.time.ReadableDateTime getDate()
+  java.time.ZonedDateTime getDate()
   List getDates()
 }
 
 class org.elasticsearch.index.fielddata.ScriptDocValues$Dates {
-  org.joda.time.ReadableDateTime get(int)
-  org.joda.time.ReadableDateTime getValue()
+  java.time.ZonedDateTime get(int)
+  java.time.ZonedDateTime getValue()
   List getValues()
-  org.joda.time.ReadableDateTime getDate()
+  java.time.ZonedDateTime getDate()
   List getDates()
 }
 

@@ -109,7 +109,7 @@ setup:
                 script_fields:
                     bar:
                         script:
-                            source: "doc.date.value.dayOfWeek"
+                            source: "doc.date.value.dayOfWeek.value"
 
     - match: { hits.hits.0.fields.bar.0: 7}
 
@@ -124,7 +124,7 @@ setup:
                             source: >
                               StringBuilder b = new StringBuilder();
                               for (def date : doc.dates) {
-                                b.append(" ").append(date.getDayOfWeek());
+                                b.append(" ").append(date.getDayOfWeek().getValue());
                               }
                               return b.toString().trim()
 
