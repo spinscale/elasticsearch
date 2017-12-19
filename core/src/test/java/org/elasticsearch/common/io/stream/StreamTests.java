@@ -20,14 +20,19 @@
 package org.elasticsearch.common.io.stream;
 
 import org.apache.lucene.util.BytesRef;
+import org.elasticsearch.Version;
 import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.test.ESTestCase;
+import org.elasticsearch.test.VersionUtils;
 
 import java.io.ByteArrayInputStream;
 import java.io.EOFException;
 import java.io.IOException;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.zone.ZoneRules;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -39,9 +44,11 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
+import static org.elasticsearch.test.VersionUtils.randomVersionBetween;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasToString;
+import static org.hamcrest.Matchers.is;
 
 public class StreamTests extends ESTestCase {
 
@@ -228,6 +235,31 @@ public class StreamTests extends ESTestCase {
         }
 
         assertThat(targetArray, equalTo(sourceArray));
+    }
+
+    public void testStreamoutputBwcTimeZone() throws IOException {
+        try (BytesStreamOutput out = new BytesStreamOutput()) {
+            out.setVersion(VersionUtils.getPreviousVersion());
+            out.writeTimeZone(ZoneOffset.UTC);
+            String timeZone = out.bytes().streamInput().readString();
+            assertThat(timeZone, is("UTC"));
+        }
+        try (BytesStreamOutput out = new BytesStreamOutput()) {
+            out.setVersion(VersionUtils.getPreviousVersion());
+            out.writeTimeZone(ZoneOffset.UTC);
+            String timeZone = out.bytes().streamInput().readTimeZone().getId();
+            assertThat(timeZone, is("UTC"));
+        }
+        try (BytesStreamOutput out = new BytesStreamOutput()) {
+            out.writeTimeZone(ZoneOffset.UTC);
+            String timeZone = out.bytes().streamInput().readString();
+            assertThat(timeZone, is("Z"));
+        }
+        try (BytesStreamOutput out = new BytesStreamOutput()) {
+            out.writeTimeZone(ZoneOffset.UTC);
+            String timeZone = out.bytes().streamInput().readTimeZone().getId();
+            assertThat(timeZone, is("Z"));
+        }
     }
 
     static final class WriteableString implements Writeable {

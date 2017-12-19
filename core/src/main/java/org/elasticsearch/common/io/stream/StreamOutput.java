@@ -35,8 +35,6 @@ import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.geo.GeoPoint;
 import org.elasticsearch.common.io.stream.Writeable.Writer;
 import org.elasticsearch.common.text.Text;
-import org.joda.time.DateTimeZone;
-import org.joda.time.ReadableInstant;
 
 import java.io.EOFException;
 import java.io.FileNotFoundException;
@@ -50,6 +48,8 @@ import java.nio.file.FileSystemException;
 import java.nio.file.FileSystemLoopException;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.NotDirectoryException;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.util.Collections;
 import java.util.Date;
@@ -580,11 +580,11 @@ public abstract class StreamOutput extends OutputStream {
             o.writeByte((byte) 12);
             o.writeLong(((Date) v).getTime());
         });
-        writers.put(ReadableInstant.class, (o, v) -> {
+        writers.put(ZonedDateTime.class, (o, v) -> {
             o.writeByte((byte) 13);
-            final ReadableInstant instant = (ReadableInstant) v;
-            o.writeString(instant.getZone().getID());
-            o.writeLong(instant.getMillis());
+            final ZonedDateTime zonedDateTime = (ZonedDateTime) v;
+            o.writeString(zonedDateTime.getZone().getId());
+            o.writeLong(zonedDateTime.toInstant().toEpochMilli());
         });
         writers.put(BytesReference.class, (o, v) -> {
             o.writeByte((byte) 14);
@@ -650,8 +650,8 @@ public abstract class StreamOutput extends OutputStream {
             type = Object[].class;
         } else if (value instanceof Map) {
             type = Map.class;
-        } else if (value instanceof ReadableInstant) {
-            type = ReadableInstant.class;
+        } else if (value instanceof ZonedDateTime) {
+            type = ZonedDateTime.class;
         } else if (value instanceof BytesReference) {
             type = BytesReference.class;
         } else {
@@ -904,16 +904,21 @@ public abstract class StreamOutput extends OutputStream {
     }
 
     /**
-     * Write a {@linkplain DateTimeZone} to the stream.
+     * Write a {@linkplain ZoneId} to the stream.
      */
-    public void writeTimeZone(DateTimeZone timeZone) throws IOException {
-        writeString(timeZone.getID());
+    public void writeTimeZone(ZoneId timeZone) throws IOException {
+        // special handling, as joda time in ES 6.x does not understand the string representation of 'Z' for UTC
+        if (getVersion().before(Version.V_7_0_0_alpha1) && timeZone.equals(ZoneOffset.UTC)) {
+            writeString("UTC");
+        } else {
+            writeString(timeZone.getId());
+        }
     }
 
     /**
-     * Write an optional {@linkplain DateTimeZone} to the stream.
+     * Write an optional {@linkplain ZoneId} to the stream.
      */
-    public void writeOptionalTimeZone(@Nullable DateTimeZone timeZone) throws IOException {
+    public void writeOptionalTimeZone(@Nullable ZoneId timeZone) throws IOException {
         if (timeZone == null) {
             writeBoolean(false);
         } else {

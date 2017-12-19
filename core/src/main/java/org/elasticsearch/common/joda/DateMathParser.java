@@ -24,6 +24,8 @@ import org.joda.time.DateTimeZone;
 import org.joda.time.MutableDateTime;
 import org.joda.time.format.DateTimeFormatter;
 
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.Objects;
 import java.util.function.LongSupplier;
 
@@ -44,7 +46,12 @@ public class DateMathParser {
     }
 
     public long parse(String text, LongSupplier now) {
-        return parse(text, now, false, null);
+        return parse(text, now, false, (DateTimeZone) null);
+    }
+
+    public long parse(String text, LongSupplier now, boolean roundUp, ZoneId zone) {
+        String zoneId = zone == null || "Z".equals(zone.getId()) ? "UTC" : zone.getId();
+        return parse(text, now, roundUp, DateTimeZone.forID(zoneId));
     }
 
     // Note: we take a callable here for the timestamp in order to be able to figure out

@@ -55,11 +55,12 @@ import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.mapper.NumberFieldMapper.NumberType;
 import org.elasticsearch.index.query.QueryShardContext;
-import org.joda.time.DateTimeZone;
 
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -313,7 +314,7 @@ public class RangeFieldMapper extends FieldMapper {
 
         @Override
         public Query rangeQuery(Object lowerTerm, Object upperTerm, boolean includeLower, boolean includeUpper,
-                                ShapeRelation relation, DateTimeZone timeZone, DateMathParser parser, QueryShardContext context) {
+                                ShapeRelation relation, ZoneId timeZone, DateMathParser parser, QueryShardContext context) {
             failIfNotIndexed();
             return rangeType.rangeQuery(name(), hasDocValues(), lowerTerm, upperTerm, includeLower, includeUpper, relation,
                 timeZone, parser, context);
@@ -609,9 +610,9 @@ public class RangeFieldMapper extends FieldMapper {
 
             @Override
             public Query rangeQuery(String field, boolean hasDocValues, Object lowerTerm, Object upperTerm, boolean includeLower,
-                                    boolean includeUpper, ShapeRelation relation, @Nullable DateTimeZone timeZone,
+                                    boolean includeUpper, ShapeRelation relation, @Nullable ZoneId timeZone,
                                     @Nullable DateMathParser parser, QueryShardContext context) {
-                DateTimeZone zone = (timeZone == null) ? DateTimeZone.UTC : timeZone;
+                ZoneId zone = (timeZone == null) ? ZoneOffset.UTC : timeZone;
                 DateMathParser dateMathParser = (parser == null) ?
                     new DateMathParser(DateFieldMapper.DEFAULT_DATE_TIME_FORMATTER) : parser;
                 Long low = lowerTerm == null ? Long.MIN_VALUE :
@@ -932,7 +933,7 @@ public class RangeFieldMapper extends FieldMapper {
             return numberType.parse(value, coerce);
         }
         public Query rangeQuery(String field, boolean hasDocValues, Object from, Object to, boolean includeFrom, boolean includeTo,
-                                ShapeRelation relation, @Nullable DateTimeZone timeZone, @Nullable DateMathParser dateMathParser,
+                                ShapeRelation relation, @Nullable ZoneId timeZone, @Nullable DateMathParser dateMathParser,
                                 QueryShardContext context) {
             Object lower = from == null ? minValue() : parse(from, false);
             Object upper = to == null ? maxValue() : parse(to, false);
