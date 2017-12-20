@@ -509,10 +509,10 @@ public class Setting<T> implements ToXContentObject {
             @Override
             public void apply(Tuple<A, B> value, Settings current, Settings previous) {
                 if (aSettingUpdater.hasChanged(current, previous)) {
-                    logger.info("updating [{}] from [{}] to [{}]", aSetting.key, aSetting.getRaw(previous), aSetting.getRaw(current));
+                    logSettingUpdate(aSetting, current, previous, logger);
                 }
                 if (bSettingUpdater.hasChanged(current, previous)) {
-                    logger.info("updating [{}] from [{}] to [{}]", bSetting.key, bSetting.getRaw(previous), bSetting.getRaw(current));
+                    logSettingUpdate(bSetting, current, previous, logger);
                 }
                 consumer.accept(value.v1(), value.v2());
             }
@@ -812,9 +812,7 @@ public class Setting<T> implements ToXContentObject {
 
                 @Override
                 public void apply(Settings value, Settings current, Settings previous) {
-                    if (logger.isInfoEnabled()) { // getRaw can create quite some objects
-                        logger.info("updating [{}] from [{}] to [{}]", key, getRaw(previous), getRaw(current));
-                    }
+                    Setting.logSettingUpdate(GroupSetting.this, current, previous, logger);
                     consumer.accept(value);
                 }
 
@@ -902,7 +900,7 @@ public class Setting<T> implements ToXContentObject {
 
         @Override
         public void apply(T value, Settings current, Settings previous) {
-            logger.info("updating [{}] from [{}] to [{}]", key, getRaw(previous), getRaw(current));
+            logSettingUpdate(Setting.this, current, previous, logger);
             consumer.accept(value);
         }
     }
@@ -1135,6 +1133,16 @@ public class Setting<T> implements ToXContentObject {
             return builder.string();
         } catch (IOException ex) {
             throw new ElasticsearchException(ex);
+        }
+    }
+
+    static void logSettingUpdate(Setting setting, Settings current, Settings previous, Logger logger) {
+        if (logger.isInfoEnabled()) {
+            if (setting.isFiltered()) {
+                logger.info("updating [{}]", setting.key);
+            } else {
+                logger.info("updating [{}] from [{}] to [{}]", setting.key, setting.getRaw(previous), setting.getRaw(current));
+            }
         }
     }
 
