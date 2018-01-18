@@ -35,6 +35,7 @@ import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.geo.GeoPoint;
 import org.elasticsearch.common.io.stream.Writeable.Writer;
 import org.elasticsearch.common.text.Text;
+import org.joda.time.ReadableInstant;
 
 import java.io.EOFException;
 import java.io.FileNotFoundException;
@@ -579,11 +580,12 @@ public abstract class StreamOutput extends OutputStream {
             o.writeByte((byte) 12);
             o.writeLong(((Date) v).getTime());
         });
-        writers.put(ZonedDateTime.class, (o, v) -> {
-            o.writeByte((byte) 13);
-            final ZonedDateTime instant = (ZonedDateTime) v;
-            o.writeString(instant.getZone().getId());
-            o.writeLong(instant.toInstant().toEpochMilli());
+        writers.put(ReadableInstant.class, (o, v) -> {
+            // this is doing a hidden conversion to a ZonedDateTime, so that when we read it somewhere else we will use java time
+            o.writeByte((byte) 23);
+            final ReadableInstant instant = (ReadableInstant) v;
+            o.writeString(instant.getZone().getID());
+            o.writeLong(instant.getMillis());
         });
         writers.put(BytesReference.class, (o, v) -> {
             o.writeByte((byte) 14);
@@ -624,7 +626,6 @@ public abstract class StreamOutput extends OutputStream {
         writers.put(ZonedDateTime.class, (o, v) -> {
             o.writeByte((byte) 23);
             final ZonedDateTime zonedDateTime = (ZonedDateTime) v;
-            zonedDateTime.getZone().getId();
             o.writeString(zonedDateTime.getZone().getId());
             o.writeLong(zonedDateTime.toInstant().toEpochMilli());
         });
@@ -651,6 +652,8 @@ public abstract class StreamOutput extends OutputStream {
             type = Map.class;
         } else if (value instanceof ZonedDateTime) {
             type = ZonedDateTime.class;
+        } else if (value instanceof ReadableInstant) {
+            type = ReadableInstant.class;
         } else if (value instanceof BytesReference) {
             type = BytesReference.class;
         } else {
