@@ -56,6 +56,7 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -459,7 +460,7 @@ public abstract class BaseXContentTestCase extends ESTestCase {
 
     public void testCalendar() throws Exception {
         long millis = ZonedDateTime.of(2016, 1, 1, 0, 0, 0, 1000, ZoneOffset.UTC).toInstant().toEpochMilli();
-        Calendar calendar = Calendar.getInstance();
+        Calendar calendar = Calendar.getInstance(Locale.ROOT);
         calendar.setTimeInMillis(millis);
         assertResult("{'calendar':'2016-01-01T00:00:00.000Z'}", () -> builder()
                 .startObject()
@@ -527,8 +528,8 @@ public abstract class BaseXContentTestCase extends ESTestCase {
         objects.put("{'objects':['" + formatter.format(dt1) + "','2016-12-25T07:59:42.213Z']}",
             new Object[]{dt1.toInstant(), dt2.toInstant()});
 
-        final Calendar c1 = Calendar.getInstance();
-        final Calendar c2 = Calendar.getInstance();
+        final Calendar c1 = Calendar.getInstance(Locale.ROOT);
+        final Calendar c2 = Calendar.getInstance(Locale.ROOT);
         c1.setTimeInMillis(ZonedDateTime.of(2012, 7, 7, 10, 23, 0, 0, ZoneOffset.UTC).toInstant().toEpochMilli());
         c2.setTimeInMillis(ZonedDateTime.of(2014, 11, 16, 19, 36, 0, 0, ZoneOffset.UTC).toInstant().toEpochMilli());
         objects.put("{'objects':['2012-07-07T10:23:00.000Z','2014-11-16T19:36:00.000Z']}", new Object[]{c1, c2});
@@ -575,7 +576,7 @@ public abstract class BaseXContentTestCase extends ESTestCase {
         final ZonedDateTime d2 = ZonedDateTime.now(ZoneOffset.UTC);
         object.put("{'object':'" + formatter.format(d2) + "'}", d2.toInstant());
 
-        final Calendar c1 = Calendar.getInstance();
+        final Calendar c1 = Calendar.getInstance(Locale.ROOT);
         c1.setTimeInMillis(ZonedDateTime.of(2010, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC).toInstant().toEpochMilli());
         object.put("{'object':'2010-01-01T00:00:00.000Z'}", c1);
 
