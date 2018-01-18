@@ -519,11 +519,13 @@ public abstract class BaseXContentTestCase extends ESTestCase {
         final DateTimeFormatter formatter = XContentBuilder.DEFAULT_DATE_PRINTER;
         final ZonedDateTime d1 = ZonedDateTime.of(2016, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         final ZonedDateTime d2 = ZonedDateTime.of(2015, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC);
-        objects.put("{'objects':['" + formatter.format(d1) + "','" + formatter.format(d2) + "']}", new Object[]{d1.toInstant(), d2.toInstant()});
+        objects.put("{'objects':['" + formatter.format(d1) + "','" + formatter.format(d2) + "']}",
+            new Object[]{d1.toInstant(), d2.toInstant()});
 
         final ZonedDateTime dt1 = ZonedDateTime.now(ZoneOffset.UTC);
         final ZonedDateTime dt2 = ZonedDateTime.of(2016, 12, 25, 7, 59, 42, 213000000, ZoneOffset.UTC);
-        objects.put("{'objects':['" + formatter.format(dt1) + "','2016-12-25T07:59:42.213Z']}", new Object[]{dt1.toInstant(), dt2.toInstant()});
+        objects.put("{'objects':['" + formatter.format(dt1) + "','2016-12-25T07:59:42.213Z']}",
+            new Object[]{dt1.toInstant(), dt2.toInstant()});
 
         final Calendar c1 = Calendar.getInstance();
         final Calendar c2 = Calendar.getInstance();
