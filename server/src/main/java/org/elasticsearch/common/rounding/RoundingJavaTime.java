@@ -28,7 +28,11 @@ import org.joda.time.DateTimeZone;
 import org.joda.time.IllegalInstantException;
 
 import java.io.IOException;
+import java.time.DayOfWeek;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
@@ -36,9 +40,8 @@ import java.time.temporal.ChronoField;
 import java.time.temporal.ChronoUnit;
 import java.time.temporal.IsoFields;
 import java.time.temporal.TemporalField;
-import java.time.temporal.TemporalUnit;
 import java.time.zone.ZoneOffsetTransition;
-import java.time.zone.ZoneRules;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -187,60 +190,55 @@ public abstract class RoundingJavaTime implements Writeable {
             return ID;
         }
 
-        /**
-         * @return The latest timestamp T which is strictly before utcMillis
-         * and such that timeZone.getOffset(T) != timeZone.getOffset(utcMillis).
-         * If there is no such T, returns Long.MAX_VALUE.
-         */
-        // TODO this could just return an instant!
-        private long previousTransition(final long utcMillis) {
-            ZoneRules zoneRules = timeZone.getRules();
-            Instant instant = Instant.ofEpochMilli(utcMillis);
+        private LocalDateTime truncateLocalDateTime(LocalDateTime localDateTime) {
+            localDateTime = localDateTime.withNano(0);
+            assert localDateTime.getNano() == 0;
+            if (unit.equals(DateTimeUnit.SECOND_OF_MINUTE)) {
+                return localDateTime;
+            }
 
-            final int offsetAtInputTime = zoneRules.getOffset(instant).getTotalSeconds();
-//            final int offsetAtInputTime = timeZone.getOffset(utcMillis);
-            do {
-                // Some timezones have transitions that do not change the offset, so we have to
-                // repeatedly call previousTransition until a nontrivial transition is found.
+            localDateTime = localDateTime.withSecond(0);
+            assert localDateTime.getSecond() == 0;
+            if (unit.equals(DateTimeUnit.MINUTES_OF_HOUR)) {
+                return localDateTime;
+            }
 
-                ZoneOffsetTransition transition = zoneRules.previousTransition(instant);
-                Instant previousTransitionInstant = transition != null ? transition.getInstant() : instant;
-                if (previousTransitionInstant.equals(instant)) {
-                    // There are no earlier transitions
-                    return Long.MAX_VALUE;
-                }
-                assert previousTransitionInstant.isBefore(instant); // Progress was made
-                instant = previousTransitionInstant;
-            } while (zoneRules.getOffset(instant).getTotalSeconds() == offsetAtInputTime);
+            localDateTime = localDateTime.withMinute(0);
+            assert localDateTime.getMinute() == 0;
+            if (unit.equals(DateTimeUnit.HOUR_OF_DAY)) {
+                return localDateTime;
+            }
 
-            return instant.toEpochMilli();
-        }
+            localDateTime = localDateTime.withHour(0);
+            assert localDateTime.getHour() == 0;
+            if (unit.equals(DateTimeUnit.DAY_OF_MONTH)) {
+                return localDateTime;
+            }
 
-        private long truncateTo(TemporalUnit unit, long utcMillis) {
-            ZonedDateTime zonedDateTime = ZonedDateTime.ofInstant(Instant.ofEpochMilli(utcMillis), ZoneOffset.UTC)
-                .withZoneSameInstant(timeZone);
-            // truncateTo() does not work with bigger units, so we have to do it ourselves
-            if (unit.equals(ChronoUnit.YEARS)) {
-                return zonedDateTime.withMonth(1).withDayOfMonth(1).withHour(0).withNano(0).withSecond(0).withMinute(0)
-                    .toInstant().toEpochMilli();
-            } else if (unit.equals(IsoFields.QUARTER_YEARS)) {
-                int quarter = (int) IsoFields.QUARTER_OF_YEAR.getFrom(zonedDateTime);
-                int month = (( quarter - 1 ) * 3) + 1;
-                return zonedDateTime.withMonth(month).withDayOfMonth(1).withNano(0).withSecond(0).withMinute(0).withHour(0)
-                    .toInstant().toEpochMilli();
-            } else if (unit.equals(ChronoUnit.MONTHS)) {
-                return zonedDateTime.withDayOfMonth(1).withNano(0).withSecond(0).withMinute(0).withHour(0).toInstant().toEpochMilli();
-            } else if (unit.equals(ChronoUnit.DAYS)) {
-                return zonedDateTime.withNano(0).withSecond(0).withMinute(0).withHour(0).toInstant().toEpochMilli();
-            } else if (unit.equals(ChronoUnit.HOURS)) {
-                return zonedDateTime.withNano(0).withSecond(0).withMinute(0).toInstant().toEpochMilli();
-            } else if (unit.equals(ChronoUnit.MINUTES)) {
-                return zonedDateTime.withNano(0).withSecond(0).toInstant().toEpochMilli();
-            } else if (unit.equals(ChronoUnit.SECONDS)) {
-                return zonedDateTime.withNano(0).toInstant().toEpochMilli();
-            } else if (unit.equals(ChronoUnit.WEEKS)) {
-                return zonedDateTime.with(ChronoField.DAY_OF_WEEK, 1).withNano(0).withSecond(0).withMinute(0).withHour(0)
-                    .toInstant().toEpochMilli();
+            if (unit.equals(DateTimeUnit.WEEK_OF_WEEKYEAR)) {
+                localDateTime = localDateTime.with(ChronoField.DAY_OF_WEEK, 1);
+                assert localDateTime.getDayOfWeek() == DayOfWeek.MONDAY;
+                return localDateTime;
+            }
+
+            localDateTime = localDateTime.withDayOfMonth(1);
+            assert localDateTime.getDayOfMonth() == 1;
+            if (unit.equals(DateTimeUnit.MONTH_OF_YEAR)) {
+                return localDateTime;
+            }
+
+            if (unit.equals(DateTimeUnit.QUARTER_OF_YEAR)) {
+                int quarter = (int) IsoFields.QUARTER_OF_YEAR.getFrom(localDateTime);
+                int month = ((quarter - 1) * 3) + 1;
+                localDateTime = localDateTime.withMonth(month);
+                assert localDateTime.getMonthValue() % 3 == 1;
+                return localDateTime;
+            }
+
+            if (unit.equals(DateTimeUnit.YEAR_OF_CENTURY)) {
+                localDateTime = localDateTime.withMonth(1);
+                assert localDateTime.getMonthValue() == 1;
+                return localDateTime;
             }
 
             throw new IllegalArgumentException("NOT YET IMPLEMENTED for unit " + unit);
@@ -248,116 +246,115 @@ public abstract class RoundingJavaTime implements Writeable {
 
         @Override
         public long round(long utcMillis) {
-            // fast shortcut for UTC
-            if (timeZone.getRules().isFixedOffset()) {
-                return truncateTo(unit.field.getBaseUnit(), utcMillis);
-            }
-
-            // When rounding to hours we consider any local time of the form 'xx:00:00' as rounded, even though this gives duplicate
-            // bucket names for the times when the clocks go back. Shorter units behave similarly. However, longer units round down to
-            // midnight, and on the days where there are two midnights we would rather pick the earlier one, so that buckets are
-            // uniquely identified by the date.
             if (unitRoundsToMidnight) {
-                final long anyLocalStartOfDay = truncateTo(unit.field.getBaseUnit(), utcMillis);
-//                logger.info("### java input [{}] output [{}]", Instant.ofEpochMilli(utcMillis), Instant.ofEpochMilli(anyLocalStartOfDay));
-
-                // `anyLocalStartOfDay` is _supposed_ to be the Unix timestamp for the start of the day in question in the current time
-                // zone.  Mostly this just means "midnight", which is fine, and on days with no local midnight it's the first time that
-                // does occur on that day which is also ok. However, on days with >1 local midnight this is _one_ of the midnights, but
-                // may not be the first. Check whether this is happening, and fix it if so.
-
-                final long previousTransition = previousTransition(anyLocalStartOfDay);
-
-                if (previousTransition == Long.MAX_VALUE) {
-                    // No previous transitions, so there can't be another earlier local midnight.
-                    return anyLocalStartOfDay;
-                }
-
-                final long currentOffset = timeZone.getRules().getOffset(Instant.ofEpochMilli(anyLocalStartOfDay)).getTotalSeconds();
-                final long previousOffset = timeZone.getRules().getOffset(Instant.ofEpochMilli(previousTransition)).getTotalSeconds();
-                assert currentOffset != previousOffset;
-
-                // NB we only assume interference from one previous transition. It's theoretically possible to have two transitions in
-                // quick succession, both of which have a midnight in them, but this doesn't appear to happen in the TZDB so (a) it's
-                // pointless to implement and (b) it won't be tested. I recognise that this comment is tempting fate and will likely
-                // cause this very situation to occur in the near future, and eagerly look forward to fixing this using a loop over
-                // previous transitions when it happens.
-
-                final long alsoLocalStartOfDay = anyLocalStartOfDay + currentOffset - previousOffset;
-                // `alsoLocalStartOfDay` is the Unix timestamp for the start of the day in question if the previous offset were in
-                // effect.
-
-                if (alsoLocalStartOfDay <= previousTransition) {
-                    // Therefore the previous offset _is_ in effect at `alsoLocalStartOfDay`, and it's earlier than anyLocalStartOfDay,
-                    // so this is the answer to use.
-                    return alsoLocalStartOfDay;
-                } else {
-                    // The previous offset is not in effect at `alsoLocalStartOfDay`, so the current offset must be.
-                    return anyLocalStartOfDay;
-                }
-
+                final ZonedDateTime zonedDateTime = Instant.ofEpochMilli(utcMillis).atZone(timeZone);
+                final LocalDateTime localDateTime = zonedDateTime.toLocalDateTime();
+                final LocalDateTime localMidnight = truncateLocalDateTime(localDateTime);
+                return firstTimeOnDay(localMidnight);
             } else {
-                do {
-                    long rounded = Instant.ofEpochMilli(utcMillis).truncatedTo(unit.field.getBaseUnit()).toEpochMilli();
+                while (true) {
+                    final Instant truncatedTime = truncateAsLocalTime(utcMillis);
+                    final ZoneOffsetTransition previousTransition = timeZone.getRules().previousTransition(Instant.ofEpochMilli(utcMillis));
 
-                    // field.roundFloor() mostly works as long as the offset hasn't changed in [rounded, utcMillis], so look at where
-                    // the offset most recently changed.
-
-                    final long previousTransition = previousTransition(utcMillis);
-
-                    if (previousTransition == Long.MAX_VALUE || previousTransition < rounded) {
-                        // The offset did not change in [rounded, utcMillis], so roundFloor() worked as expected.
-                        return rounded;
+                    if (previousTransition == null) {
+                        // truncateAsLocalTime cannot have failed if there were no previous transitions
+                        return truncatedTime.toEpochMilli();
                     }
 
-                    // The offset _did_ change in [rounded, utcMillis]. Put differently, this means that none of the times in
-                    // [previousTransition+1, utcMillis] were rounded, so the rounded time must be <= previousTransition.  This means
-                    // it's sufficient to try and round previousTransition down.
-                    assert previousTransition < utcMillis;
-                    utcMillis = previousTransition;
-                } while (true);
+                    final long previousTransitionMillis = previousTransition.getInstant().toEpochMilli();
+
+                    if (truncatedTime != null && previousTransitionMillis <= truncatedTime.toEpochMilli()) {
+                        return truncatedTime.toEpochMilli();
+                    }
+
+                    // There was a transition in between the input time and the truncated time. Return to the transition time and
+                    // round that down instead.
+                    utcMillis = previousTransitionMillis - 1;
+                }
+            }
+        }
+
+        private long firstTimeOnDay(LocalDateTime localMidnight) {
+            assert localMidnight.toLocalTime().equals(LocalTime.of(0, 0, 0)) : "firstTimeOnDay should only be called at midnight";
+            assert unitRoundsToMidnight : "firstTimeOnDay should only be called if unitRoundsToMidnight";
+
+            // Now work out what localMidnight actually means
+            final List<ZoneOffset> currentOffsets = timeZone.getRules().getValidOffsets(localMidnight);
+            if (currentOffsets.size() >= 1) {
+                // There is at least one midnight on this day, so choose the first
+                final ZoneOffset firstOffset = currentOffsets.get(0);
+                final OffsetDateTime offsetMidnight = localMidnight.atOffset(firstOffset);
+                return offsetMidnight.toInstant().toEpochMilli();
+            } else {
+                // There were no midnights on this day, so we must have entered the day via an offset transition.
+                // Use the time of the transition as it is the earliest time on the right day.
+                ZoneOffsetTransition zoneOffsetTransition = timeZone.getRules().getTransition(localMidnight);
+                return zoneOffsetTransition.getInstant().toEpochMilli();
+            }
+        }
+
+        private Instant truncateAsLocalTime(long utcMillis) {
+            assert unitRoundsToMidnight == false : "truncateAsLocalTime should not be called if unitRoundsToMidnight";
+
+            final LocalDateTime truncatedLocalDateTime
+                = truncateLocalDateTime(Instant.ofEpochMilli(utcMillis).atZone(timeZone).toLocalDateTime());
+            final List<ZoneOffset> currentOffsets = timeZone.getRules().getValidOffsets(truncatedLocalDateTime);
+
+            if (currentOffsets.size() >= 1) {
+                // at least one possibilities - choose the latest one that's still no later than the input time
+                for (int offsetIndex = currentOffsets.size() - 1; offsetIndex >= 0; offsetIndex--) {
+                    final Instant result = truncatedLocalDateTime.atOffset(currentOffsets.get(offsetIndex)).toInstant();
+                    if (result.toEpochMilli() <= utcMillis) {
+                        return result;
+                    }
+                }
+
+                assert false : "rounded time not found for " + utcMillis + " with " + this;
+                return null;
+            } else {
+                // The chosen local time didn't happen. This means we were given a time in an hour (or a minute) whose start
+                // is missing due to an offset transition, so the time cannot be truncated.
+                return null;
+            }
+        }
+
+        private LocalDateTime nextRelevantMidnight(LocalDateTime localMidnight) {
+            assert localMidnight.toLocalTime().equals(LocalTime.of(0, 0, 0)) : "nextRelevantMidnight should only be called at midnight";
+            assert unitRoundsToMidnight : "firstTimeOnDay should only be called if unitRoundsToMidnight";
+
+            switch (unit) {
+                case DAY_OF_MONTH:
+                    return localMidnight.plus(1, ChronoUnit.DAYS);
+                case WEEK_OF_WEEKYEAR:
+                    return localMidnight.plus(7, ChronoUnit.DAYS);
+                case MONTH_OF_YEAR:
+                    return localMidnight.plus(1, ChronoUnit.MONTHS);
+                case QUARTER_OF_YEAR:
+                    return localMidnight.plus(3, ChronoUnit.MONTHS);
+                case YEAR_OF_CENTURY:
+                    return localMidnight.plus(1, ChronoUnit.YEARS);
+                default:
+                    throw new IllegalArgumentException("Unknown round-to-midnight unit: " + unit);
             }
         }
 
         @Override
         public long nextRoundingValue(long utcMillis) {
-            final long floor = round(utcMillis);
-            // add one unit and round to get to next rounded value
-            long next;
-            // TODO this can be reduced again thx to the changes in truncateTo()
-            if (unit.field.getBaseUnit().equals(ChronoUnit.MONTHS)) {
-                long beforeRoundMillis = ZonedDateTime.ofInstant(Instant.ofEpochMilli(floor), ZoneOffset.UTC)
-                    .withZoneSameInstant(timeZone).plusMonths(1).toInstant().toEpochMilli();
-                next = round(beforeRoundMillis);
-            } else if (unit.field.getBaseUnit().equals(ChronoUnit.YEARS)) {
-                long beforeRoundMillis = ZonedDateTime.ofInstant(Instant.ofEpochMilli(floor), timeZone)
-                    .plusYears(1).toInstant().toEpochMilli();
-                next = round(beforeRoundMillis);
-            } else if (unit.field.getBaseUnit().equals(IsoFields.QUARTER_YEARS)) {
-                long beforeRoundMillis = ZonedDateTime.ofInstant(Instant.ofEpochMilli(floor), timeZone)
-                    .plus(1, IsoFields.QUARTER_YEARS).toInstant().toEpochMilli();
-                next = round(beforeRoundMillis);
+            if (unitRoundsToMidnight) {
+                final ZonedDateTime zonedDateTime = Instant.ofEpochMilli(utcMillis).atZone(timeZone);
+                final LocalDateTime localDateTime = zonedDateTime.toLocalDateTime();
+                final LocalDateTime earlierLocalMidnight = truncateLocalDateTime(localDateTime);
+                final LocalDateTime localMidnight = nextRelevantMidnight(earlierLocalMidnight);
+                return firstTimeOnDay(localMidnight);
             } else {
-                next = round(floor + unit.field.getBaseUnit().getDuration().toMillis());
-            }
-            if (next == floor) {
-                // in rare case we need to add more than one unit
-                if (unit.field.getBaseUnit().equals(ChronoUnit.MONTHS)) {
-                    next = round(ZonedDateTime.ofInstant(Instant.ofEpochMilli(floor), ZoneOffset.UTC)
-                        .withZoneSameInstant(timeZone).plusMonths(1).toInstant().toEpochMilli());
-                } else if (unit.field.getBaseUnit().equals(ChronoUnit.YEARS)) {
-                    long beforeRoundMillis =
-                        ZonedDateTime.ofInstant(Instant.ofEpochMilli(floor), timeZone).plusYears(1).toInstant().toEpochMilli();
-                    next = round(beforeRoundMillis);
-                } else if (unit.field.getBaseUnit().equals(IsoFields.QUARTER_YEARS)) {
-                    long beforeRoundMillis = ZonedDateTime.ofInstant(Instant.ofEpochMilli(floor), timeZone)
-                        .plus(1, IsoFields.QUARTER_YEARS).toInstant().toEpochMilli();
-                    next = round(beforeRoundMillis);
+                final long unitSize = unit.field.getBaseUnit().getDuration().toMillis();
+                final long roundedAfterOneIncrement = round(utcMillis + unitSize);
+                if (utcMillis < roundedAfterOneIncrement) {
+                    return roundedAfterOneIncrement;
                 } else {
-                    next = round(floor + unit.field.getBaseUnit().getDuration().toMillis() * 2);
+                    return round(utcMillis + 2 * unitSize);
                 }
             }
-            return next;
         }
 
         @Override

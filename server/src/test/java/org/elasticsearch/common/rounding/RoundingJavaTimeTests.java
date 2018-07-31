@@ -450,7 +450,6 @@ public class RoundingJavaTimeTests extends ESTestCase {
         }
     }
 
-    @AwaitsFix(bugUrl = "not yet assigned")
     public void testEdgeCasesTransition() {
         {
             // standard +/-1 hour DST transition, CET
@@ -524,7 +523,6 @@ public class RoundingJavaTimeTests extends ESTestCase {
         }
     }
 
-    @AwaitsFix(bugUrl = "not yet assigned")
     public void testDST_Europe_Rome() {
         // time zone "Europe/Rome", rounding to days. Rome had two midnights on the day the clocks went back in 1978, and
         // timeZone.convertLocalToUTC() gives the later of the two because Rome is east of UTC, whereas we want the earlier.
@@ -558,7 +556,6 @@ public class RoundingJavaTimeTests extends ESTestCase {
     /**
      * Test for a time zone whose days overlap because the clocks are set back across midnight at the end of DST.
      */
-    @AwaitsFix(bugUrl = "not yet assigned")
     public void testDST_America_St_Johns() {
         // time zone "America/St_Johns", rounding to days.
         ZoneId tz = ZoneId.of("America/St_Johns");
@@ -622,7 +619,6 @@ public class RoundingJavaTimeTests extends ESTestCase {
     /**
      * tests for dst transition with overlaps and day roundings.
      */
-    @AwaitsFix(bugUrl = "not yet assigned")
     public void testDST_END_Edgecases() {
         // First case, dst happens at 1am local time, switching back one hour.
         // We want the overlapping hour to count for the next day, making it a 25h interval
@@ -647,7 +643,7 @@ public class RoundingJavaTimeTests extends ESTestCase {
         // Second case, dst happens at 0am local time, switching back one hour to 23pm local time.
         // We want the overlapping hour to count for the previous day here
 
-        tz = ZoneOffset.of("America/Lima");
+        tz = ZoneId.of("America/Lima");
         rounding = new RoundingJavaTime.TimeUnitRounding(timeUnit, tz);
 
         // Sunday, 1 April 1990, 00:00:00 clocks were turned backward 1 hour to
