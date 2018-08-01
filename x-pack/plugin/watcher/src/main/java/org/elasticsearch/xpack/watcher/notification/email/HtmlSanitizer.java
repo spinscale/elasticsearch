@@ -51,7 +51,7 @@ public class HtmlSanitizer {
     private final boolean enabled;
     @SuppressForbidden( reason = "PolicyFactory uses guava Function")
     private final PolicyFactory policy;
-    
+
     public HtmlSanitizer(Settings settings) {
         enabled = SETTING_SANITIZATION_ENABLED.get(settings);
         List<String> allow = SETTING_SANITIZATION_ALLOW.get(settings);
@@ -113,6 +113,11 @@ public class HtmlSanitizer {
                     break;
                 case "_styles":
                     policyBuilder.allowStyling(CssSchema.DEFAULT);
+                    break;
+                case "style:all":
+                    policyBuilder.allowStyling(CssSchema.DEFAULT);
+                    policyBuilder.allowElements("style");
+                    policyBuilder.allowTextIn("style");
                     break;
                 case "img:all":
                 case "img":

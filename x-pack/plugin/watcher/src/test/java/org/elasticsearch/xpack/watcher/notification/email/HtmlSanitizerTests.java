@@ -113,6 +113,14 @@ public class HtmlSanitizerTests extends ESTestCase {
         assertThat(sanitizedHtml, equalTo(html));
     }
 
+    public void testAllowStyleTag() {
+        String html = "<style> h1 {color : red; }</style>";
+        Settings settings = Settings.builder().putList("xpack.notification.email.html.sanitization.allow", "style:all").build();
+        HtmlSanitizer sanitizer = new HtmlSanitizer(settings);
+        String sanitizedHtml = sanitizer.sanitize(html);
+        assertThat(sanitizedHtml, equalTo(html));
+    }
+
     public void testDefaultFormattingAllowed() {
         String html =  "<b></b><i></i><s></s><u></u><o></o><sup></sup><sub></sub><ins></ins><del></del><strong></strong>" +
                 "<strike></strike><tt></tt><code></code><big></big><small></small><span></span><br /><em></em><hr />";
