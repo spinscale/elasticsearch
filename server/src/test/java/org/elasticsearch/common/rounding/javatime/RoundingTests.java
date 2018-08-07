@@ -273,8 +273,7 @@ public class RoundingTests extends ESTestCase {
         ZoneId tz = ZoneId.of("Asia/Kathmandu");
         Rounding rounding = new Rounding.TimeIntervalRounding(interval, tz);
         assertThat(rounding.round(time("1985-12-31T23:55:00+05:30")), isDate(time("1985-12-31T23:40:00+05:30"), tz));
-        // TODO all are working except this one
-//        assertThat(rounding.round(time("1986-01-01T00:16:00+05:45")), isDate(time("1986-01-01T00:15:00+05:45"), tz));
+        assertThat(rounding.round(time("1986-01-01T00:16:00+05:45")), isDate(time("1986-01-01T00:15:00+05:45"), tz));
         assertThat(time("1986-01-01T00:15:00+05:45") - time("1985-12-31T23:40:00+05:30"), equalTo(TimeUnit.MINUTES.toMillis(20)));
         assertThat(rounding.round(time("1986-01-01T00:26:00+05:45")), isDate(time("1986-01-01T00:20:00+05:45"), tz));
         assertThat(time("1986-01-01T00:20:00+05:45") - time("1986-01-01T00:15:00+05:45"), equalTo(TimeUnit.MINUTES.toMillis(5)));
@@ -295,8 +294,7 @@ public class RoundingTests extends ESTestCase {
         assertThat(rounding.round(time("2016-03-27T01:41:00+01:00")), isDate(time("2016-03-27T01:30:00+01:00"), tz));
         assertThat(rounding.round(time("2016-03-27T01:51:00+01:00")), isDate(time("2016-03-27T01:44:00+01:00"), tz));
         assertThat(rounding.round(time("2016-03-27T01:59:00+01:00")), isDate(time("2016-03-27T01:58:00+01:00"), tz));
-        // TODO all are working except this one
-//        assertThat(rounding.round(time("2016-03-27T03:05:00+02:00")), isDate(time("2016-03-27T03:00:00+02:00"), tz));
+        assertThat(rounding.round(time("2016-03-27T03:05:00+02:00")), isDate(time("2016-03-27T03:00:00+02:00"), tz));
         assertThat(rounding.round(time("2016-03-27T03:12:00+02:00")), isDate(time("2016-03-27T03:08:00+02:00"), tz));
         assertThat(rounding.round(time("2016-03-27T03:25:00+02:00")), isDate(time("2016-03-27T03:22:00+02:00"), tz));
         assertThat(rounding.round(time("2016-03-27T03:39:00+02:00")), isDate(time("2016-03-27T03:36:00+02:00"), tz));
@@ -384,8 +382,8 @@ public class RoundingTests extends ESTestCase {
         long previousDate = Long.MIN_VALUE;
         for (Tuple<String, String> dates : expectedDates) {
             final long roundedDate = rounding.round(time(dates.v1()));
-            assertThat(roundedDate, isDate(time(dates.v2()), tz));
-            assertThat(roundedDate, greaterThanOrEqualTo(previousDate));
+            assertThat(dates.toString(), roundedDate, isDate(time(dates.v2()), tz));
+            assertThat(dates.toString(), roundedDate, greaterThanOrEqualTo(previousDate));
             previousDate = roundedDate;
         }
         // here's what this means for interval widths

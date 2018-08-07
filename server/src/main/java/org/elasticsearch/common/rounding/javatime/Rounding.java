@@ -23,8 +23,6 @@ import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.unit.TimeValue;
-import org.joda.time.DateTimeZone;
-import org.joda.time.IllegalInstantException;
 
 import java.io.IOException;
 import java.time.DayOfWeek;
@@ -386,8 +384,16 @@ public abstract class Rounding implements Writeable {
     }
 
     static class TimeIntervalRounding extends Rounding {
+        @Override
+        public String toString() {
+            return "TimeIntervalRounding{" +
+                "interval=" + interval +
+                ", timeZone=" + timeZone +
+                '}';
+        }
 
         static final byte ID = 2;
+        static final ZoneId UTC = ZoneId.of("UTC");
 
         private final long interval;
         private final ZoneId timeZone;
@@ -412,70 +418,45 @@ public abstract class Rounding implements Writeable {
         @Override
         public long round(final long utcMillis) {
             final Instant utcInstant = Instant.ofEpochMilli(utcMillis);
-            int offsetSeconds = timeZone.getRules().getOffset(utcInstant).getTotalSeconds();
-            long timeLocal = utcMillis + (offsetSeconds * 1000);
+            final LocalDateTime rawLocalDateTime = Instant.ofEpochMilli(utcMillis).atZone(timeZone).toLocalDateTime();
 
-            final long rounded = roundKey(timeLocal, interval) * interval;
-            long roundedUTC;
-            if (isInDSTGap(rounded) == false) {
-                int offsetOriginal = timeZone.getRules().getOffset(utcInstant).getTotalSeconds();
-                long instantUtc = rounded - (offsetOriginal * 1000);
-                int offsetLocalFromOriginal = timeZone.getRules().getOffset(Instant.ofEpochMilli(instantUtc)).getTotalSeconds();
-                if (offsetLocalFromOriginal == offsetOriginal) {
-                    roundedUTC = instantUtc;
-                } else {
-                    int offsetLocal = timeZone.getRules().getOffset(Instant.ofEpochMilli(rounded)).getTotalSeconds();
-                    int offset = timeZone.getRules().getOffset(Instant.ofEpochMilli(rounded - (offsetLocal * 1000))).getTotalSeconds();
-                    if (offsetLocal != offset) {
-                        long nextLocal = timeZone.getRules()
-                            .nextTransition(Instant.ofEpochMilli(rounded - (offsetLocal * 1000))).getInstant().toEpochMilli();
-                        if (nextLocal == (rounded - (offsetLocal * 1000))) {
-                            nextLocal = Long.MAX_VALUE;
-                        }
-                        long nextAdjusted = timeZone.getRules()
-                            .nextTransition(Instant.ofEpochMilli(rounded - (offset * 1000))).getInstant().toEpochMilli();
-                        if (nextAdjusted == (rounded - (offset * 1000))) {
-                            nextAdjusted = Long.MAX_VALUE;
-                        }
-                        if (nextAdjusted != nextLocal) {
-                            offset = offsetLocal;
-                        }
+            // a millisecond value with the same local time, in UTC, as `utcMillis` has in `timeZone`
+            final long localMillis = utcMillis + timeZone.getRules().getOffset(utcInstant).getTotalSeconds() * 1000;
+            assert localMillis == rawLocalDateTime.atZone(UTC).toInstant().toEpochMilli();
+
+            final long roundedMillis = roundKey(localMillis, interval) * interval;
+            final LocalDateTime roundedLocalDateTime = Instant.ofEpochMilli(roundedMillis).atZone(UTC).toLocalDateTime();
+
+            // Now work out what roundedLocalDateTime actually means
+            final List<ZoneOffset> currentOffsets = timeZone.getRules().getValidOffsets(roundedLocalDateTime);
+            if (currentOffsets.size() >= 1) {
+                // There is at least one instant with the desired local time. In general the desired result is
+                // the latest rounded time that's no later than the input time, but this could involve rounding across
+                // a timezone transition, which may yield the wrong result
+                final ZoneOffsetTransition previousTransition = timeZone.getRules().previousTransition(utcInstant.plusMillis(1));
+                for (int offsetIndex = currentOffsets.size() - 1; 0 <= offsetIndex; offsetIndex--) {
+                    final OffsetDateTime offsetTime = roundedLocalDateTime.atOffset(currentOffsets.get(offsetIndex));
+                    final Instant offsetInstant = offsetTime.toInstant();
+                    if (previousTransition != null && offsetInstant.isBefore(previousTransition.getInstant())) {
+                        // Rounding down across the transition can yield the wrong result. It's best to return to the transition time
+                        // and round that down.
+                        return round(previousTransition.getInstant().toEpochMilli() - 1);
                     }
-                    roundedUTC = rounded - (offset * 1000);
-                }
-                // check if we crossed DST transition, in this case we want the
-                // last rounded value before the transition
 
-                ZoneOffsetTransition offsetTransition = timeZone.getRules().previousTransition(Instant.ofEpochMilli(utcMillis+1));
-                if (offsetTransition != null) {
-                    long transition = offsetTransition.getInstant().toEpochMilli() - 1;
-                    if (transition != utcMillis && transition > roundedUTC) {
-                            roundedUTC = round(transition);
+                    if (utcInstant.isBefore(offsetTime.toInstant()) == false) {
+                        return offsetInstant.toEpochMilli();
                     }
                 }
+
+                final OffsetDateTime offsetTime = roundedLocalDateTime.atOffset(currentOffsets.get(0));
+                final Instant offsetInstant = offsetTime.toInstant();
+                assert false : this + " failed to round " + utcMillis + " down: " + offsetInstant + " is the earliest possible";
+                return offsetInstant.toEpochMilli(); // TODO or throw something?
             } else {
-                /*
-                 * Edge case where the rounded local time is illegal and landed
-                 * in a DST gap. In this case, we choose 1ms tick after the
-                 * transition date. We don't want the transition date itself
-                 * because those dates, when rounded themselves, fall into the
-                 * previous interval. This would violate the invariant that the
-                 * rounding operation should be idempotent.
-                 */
-                ZoneOffsetTransition transition = timeZone.getRules().previousTransition(utcInstant);
-                if (transition != null) {
-                    long previousTransition = transition.getInstant().toEpochMilli();
-                    // if the previous transition is older than what we rounded to, we cannot use it as we would go too far in the past
-                    if (previousTransition < rounded) {
-                        roundedUTC = utcMillis;
-                    } else {
-                        roundedUTC = previousTransition + 1;
-                    }
-                } else {
-                    roundedUTC = utcMillis;
-                }
+                // The desired time isn't valid because within a gap, so just return the gap time.
+                ZoneOffsetTransition zoneOffsetTransition = timeZone.getRules().getTransition(roundedLocalDateTime);
+                return zoneOffsetTransition.getInstant().toEpochMilli();
             }
-            return roundedUTC;
         }
 
         private static long roundKey(long value, long interval) {
@@ -484,52 +465,6 @@ public abstract class Rounding implements Writeable {
             } else {
                 return value / interval;
             }
-        }
-
-        /**
-         * Determine whether the local instant is a valid instant in the given
-         * time zone. The logic for this is taken from
-         * {@link DateTimeZone#convertLocalToUTC(long, boolean)} for the
-         * `strict` mode case, but instead of throwing an
-         * {@link IllegalInstantException}, which is costly, we want to return a
-         * flag indicating that the value is illegal in that time zone.
-         */
-        private boolean isInDSTGap(long instantLocal) {
-            if (timeZone.getRules().isFixedOffset()) {
-                return false;
-            }
-
-            // get the offset at instantLocal (first estimate)
-            int offsetLocal = timeZone.getRules().getOffset(Instant.ofEpochMilli(instantLocal)).getTotalSeconds() * 1000;
-            // adjust instantLocal using the estimate and recalc the offset
-            int offset = timeZone.getRules().getOffset(Instant.ofEpochMilli(instantLocal - offsetLocal)).getTotalSeconds() * 1000;
-            // if the offsets differ, we must be near a DST boundary
-            if (offsetLocal != offset) {
-                // determine if we are in the DST gap
-                long nextLocal = Long.MIN_VALUE;
-                ZoneOffsetTransition nextLocalTransition = timeZone.getRules()
-                    .nextTransition(Instant.ofEpochMilli(instantLocal - offsetLocal + 1));
-                if (nextLocalTransition != null) {
-                    nextLocal = nextLocalTransition.getInstant().toEpochMilli();
-                    if (nextLocal == (instantLocal - offsetLocal)) {
-                        nextLocal = Long.MAX_VALUE;
-                    }
-                }
-                long nextAdjusted = Long.MIN_VALUE;
-                ZoneOffsetTransition zoneOffsetTransition = timeZone.getRules()
-                    .nextTransition(Instant.ofEpochMilli(instantLocal - offset + 1));
-                if (zoneOffsetTransition != null) {
-                    nextAdjusted = zoneOffsetTransition.getInstant().toEpochMilli();
-                    if (zoneOffsetTransition == null || nextAdjusted == (instantLocal - offset)) {
-                        nextAdjusted = Long.MAX_VALUE;
-                    }
-                }
-                if (nextLocal != nextAdjusted) {
-                    // we are in the DST gap
-                    return true;
-                }
-            }
-            return false;
         }
 
         @Override
