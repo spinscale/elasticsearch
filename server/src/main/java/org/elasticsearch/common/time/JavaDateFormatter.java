@@ -83,7 +83,6 @@ class JavaDateFormatter implements DateFormatter {
         return new JavaDateFormatter(format, printer.withZone(zoneId), parsersWithZone);
     }
 
-    @Override
     public String format(TemporalAccessor accessor) {
         return printer.format(accessor);
     }
