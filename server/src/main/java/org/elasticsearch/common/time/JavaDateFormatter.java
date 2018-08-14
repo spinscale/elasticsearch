@@ -28,6 +28,7 @@ import java.time.temporal.TemporalField;
 import java.util.Arrays;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 
 class JavaDateFormatter implements DateFormatter {
 
@@ -92,7 +93,6 @@ class JavaDateFormatter implements DateFormatter {
         return format;
     }
 
-    @Override
     public DateFormatter parseDefaulting(Map<TemporalField, Long> fields) {
         final DateTimeFormatterBuilder parseDefaultingBuilder = new DateTimeFormatterBuilder().append(printer);
         fields.forEach(parseDefaultingBuilder::parseDefaulting);
@@ -107,5 +107,15 @@ class JavaDateFormatter implements DateFormatter {
             }
             return new JavaDateFormatter(format, parseDefaultingBuilder.toFormatter(Locale.ROOT), parsersWithDefaulting);
         }
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (obj.getClass().equals(this.getClass()) == false) {
+            return false;
+        }
+        JavaDateFormatter other = (JavaDateFormatter) obj;
+
+        return Objects.equals(printer, other.printer) && Arrays.equals(parsers, other.parsers);
     }
 }

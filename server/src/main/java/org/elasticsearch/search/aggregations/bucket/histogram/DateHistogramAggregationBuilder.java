@@ -25,10 +25,10 @@ import org.apache.lucene.index.SortedNumericDocValues;
 import org.apache.lucene.search.DocIdSetIterator;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
-import org.elasticsearch.common.joda.DateMathParser;
-import org.elasticsearch.common.joda.Joda;
 import org.elasticsearch.common.rounding.DateTimeUnit;
 import org.elasticsearch.common.rounding.Rounding;
+import org.elasticsearch.common.time.DateFormatters;
+import org.elasticsearch.common.time.DateMathParser;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.ObjectParser;
 import org.elasticsearch.common.xcontent.XContentBuilder;
@@ -54,10 +54,11 @@ import org.elasticsearch.search.aggregations.support.ValuesSourceConfig;
 import org.elasticsearch.search.aggregations.support.ValuesSourceParserHelper;
 import org.elasticsearch.search.aggregations.support.ValuesSourceType;
 import org.elasticsearch.search.internal.SearchContext;
-import org.joda.time.DateTimeField;
-import org.joda.time.DateTimeZone;
 
 import java.io.IOException;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -72,7 +73,7 @@ import static java.util.Collections.unmodifiableMap;
 public class DateHistogramAggregationBuilder extends ValuesSourceAggregationBuilder<ValuesSource.Numeric, DateHistogramAggregationBuilder>
         implements MultiBucketAggregationBuilder {
     public static final String NAME = "date_histogram";
-    private static DateMathParser EPOCH_MILLIS_PARSER = new DateMathParser(Joda.forPattern("epoch_millis", Locale.ROOT));
+    private static DateMathParser EPOCH_MILLIS_PARSER = new DateMathParser(DateFormatters.forPattern("epoch_millis", Locale.ROOT));
 
     public static final Map<String, DateTimeUnit> DATE_FIELD_UNITS;
 
@@ -370,11 +371,11 @@ public class DateHistogramAggregationBuilder extends ValuesSourceAggregationBuil
      * coordinating node in order to generate missing buckets, which may cross a transition
      * even though data on the shards doesn't.
      */
-    DateTimeZone rewriteTimeZone(QueryShardContext context) throws IOException {
-        final DateTimeZone tz = timeZone();
+    ZoneId rewriteTimeZone(QueryShardContext context) throws IOException {
+        final ZoneId tz = timeZone();
         if (field() != null &&
                 tz != null &&
-                tz.isFixed() == false &&
+                tz.getRules().isFixedOffset() == false &&
                 field() != null &&
                 script() == null) {
             final MappedFieldType ft = context.fieldMapper(field());
@@ -392,8 +393,9 @@ public class DateHistogramAggregationBuilder extends ValuesSourceAggregationBuil
                 }
 
                 if (anyInstant != null) {
-                    final long prevTransition = tz.previousTransition(anyInstant);
-                    final long nextTransition = tz.nextTransition(anyInstant);
+                    Instant instant = Instant.ofEpochMilli(anyInstant);
+                    final long prevTransition = tz.getRules().previousTransition(instant).getInstant().toEpochMilli();
+                    final long nextTransition = tz.getRules().nextTransition(instant).getInstant().toEpochMilli();
 
                     // We need all not only values but also rounded values to be within
                     // [prevTransition, nextTransition].
@@ -409,7 +411,7 @@ public class DateHistogramAggregationBuilder extends ValuesSourceAggregationBuil
                     // rounding rounds down, so 'nextTransition' is a good upper bound
                     final long high = nextTransition;
 
-                    if (ft.isFieldWithinQuery(reader, low, high, true, false, DateTimeZone.UTC, EPOCH_MILLIS_PARSER,
+                    if (ft.isFieldWithinQuery(reader, low, high, true, false, ZoneOffset.UTC, EPOCH_MILLIS_PARSER,
                             context) == Relation.WITHIN) {
                         // All values in this reader have the same offset despite daylight saving times.
                         // This is very common for location-based timezones such as Europe/Paris in
@@ -425,9 +427,9 @@ public class DateHistogramAggregationBuilder extends ValuesSourceAggregationBuil
     @Override
     protected ValuesSourceAggregatorFactory<Numeric, ?> innerBuild(SearchContext context, ValuesSourceConfig<Numeric> config,
             AggregatorFactory<?> parent, Builder subFactoriesBuilder) throws IOException {
-        final DateTimeZone tz = timeZone();
+        final ZoneId tz = timeZone();
         final Rounding rounding = createRounding(tz);
-        final DateTimeZone rewrittenTimeZone = rewriteTimeZone(context.getQueryShardContext());
+        final ZoneId rewrittenTimeZone = rewriteTimeZone(context.getQueryShardContext());
         final Rounding shardRounding;
         if (tz == rewrittenTimeZone) {
             shardRounding = rounding;
@@ -467,7 +469,7 @@ public class DateHistogramAggregationBuilder extends ValuesSourceAggregationBuil
         }
     }
 
-    private Rounding createRounding(DateTimeZone timeZone) {
+    private Rounding createRounding(ZoneId timeZone) {
         Rounding.Builder tzRoundingBuilder;
         DateTimeUnit intervalAsUnit = getIntervalAsDateTimeUnit();
         if (intervalAsUnit != null) {

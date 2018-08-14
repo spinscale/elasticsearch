@@ -653,6 +653,16 @@ public abstract class StreamInput extends InputStream {
         return null;
     }
 
+    /**
+     * Read an optional {@linkplain ZoneId}.
+     */
+    public ZoneId readOptionalZoneId() throws IOException {
+        if (readBoolean()) {
+            return ZoneId.of(readString());
+        }
+        return null;
+    }
+
     public int[] readIntArray() throws IOException {
         int length = readArraySize();
         int[] values = new int[length];

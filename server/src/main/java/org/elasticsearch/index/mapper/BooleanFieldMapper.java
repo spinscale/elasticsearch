@@ -45,6 +45,8 @@ import org.elasticsearch.search.DocValueFormat;
 import org.joda.time.DateTimeZone;
 
 import java.io.IOException;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -193,7 +195,7 @@ public class BooleanFieldMapper extends FieldMapper {
         }
 
         @Override
-        public DocValueFormat docValueFormat(@Nullable String format, DateTimeZone timeZone) {
+        public DocValueFormat docValueFormat(@Nullable String format, ZoneId timeZone) {
             if (format != null) {
                 throw new IllegalArgumentException("Field [" + name() + "] of type [" + typeName() + "] does not support custom formats");
             }

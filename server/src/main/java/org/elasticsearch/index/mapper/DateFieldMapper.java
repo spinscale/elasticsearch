@@ -40,6 +40,8 @@ import org.elasticsearch.common.joda.DateMathParser;
 import org.elasticsearch.common.joda.FormatDateTimeFormatter;
 import org.elasticsearch.common.joda.Joda;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.time.CompoundDateTimeFormatter;
+import org.elasticsearch.common.time.DateFormatters;
 import org.elasticsearch.common.util.LocaleUtils;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.support.XContentMapValues;
@@ -66,6 +68,10 @@ public class DateFieldMapper extends FieldMapper {
     public static final String CONTENT_TYPE = "date";
     public static final FormatDateTimeFormatter DEFAULT_DATE_TIME_FORMATTER = Joda.forPattern(
             "strict_date_optional_time||epoch_millis", Locale.ROOT);
+    // TODO RENAME TO ABOVE
+    public static final String DEFAULT_COMPOUND_DATE_TIME_FORMATTER_STRING = "strict_date_optional_time||epoch_millis";
+    public static final CompoundDateTimeFormatter DEFAULT_COMPOUND_DATE_TIME_FORMATTER =
+        DateFormatters.forPattern(DEFAULT_COMPOUND_DATE_TIME_FORMATTER_STRING);
 
     public static class Defaults {
         public static final Explicit<Boolean> IGNORE_MALFORMED = new Explicit<>(false, false);
