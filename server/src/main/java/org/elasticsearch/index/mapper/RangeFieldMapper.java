@@ -147,7 +147,7 @@ public class RangeFieldMapper extends FieldMapper {
             CompoundDateTimeFormatter dateTimeFormatter = fieldType().dateTimeFormatter;
             if (fieldType().rangeType == RangeType.DATE) {
                 if (Objects.equals(builder.formatter, formatter) == false || Objects.equals(builder.locale, locale) == false) {
-                    fieldType().setDateTimeFormatter(formatter, locale);
+                    fieldType().setDateTimeFormatter(DateFormatters.forPattern(formatter, locale));
                 }
             } else if (dateTimeFormatter != null) {
                 throw new IllegalArgumentException("field [" + name() + "] of type [" + fieldType().rangeType
@@ -203,8 +203,6 @@ public class RangeFieldMapper extends FieldMapper {
         protected RangeType rangeType;
         protected CompoundDateTimeFormatter dateTimeFormatter;
         protected DateMathParser dateMathParser;
-        protected String formatterString;
-        protected Locale locale;
 
         RangeFieldType(RangeType type) {
             super();
@@ -213,7 +211,7 @@ public class RangeFieldMapper extends FieldMapper {
             setHasDocValues(true);
             setOmitNorms(true);
             if (rangeType == RangeType.DATE) {
-                setDateTimeFormatter("strict_date_optional_time||epoch_millis", Locale.ROOT);
+                setDateTimeFormatter(DateFieldMapper.DEFAULT_DATE_TIME_FORMATTER);
             }
         }
 
@@ -221,7 +219,7 @@ public class RangeFieldMapper extends FieldMapper {
             super(other);
             this.rangeType = other.rangeType;
             if (other.dateTimeFormatter() != null) {
-                setDateTimeFormatter(other.formatterString, other.locale);
+                setDateTimeFormatter(other.dateTimeFormatter());
             }
         }
 
@@ -254,12 +252,10 @@ public class RangeFieldMapper extends FieldMapper {
             return dateTimeFormatter;
         }
 
-        public void setDateTimeFormatter(String formatterString, Locale locale) {
+        public void setDateTimeFormatter(CompoundDateTimeFormatter dateTimeFormatter) {
             checkIfFrozen();
-            this.dateTimeFormatter = DateFormatters.forPattern(formatterString, locale);
+            this.dateTimeFormatter = dateTimeFormatter;
             this.dateMathParser = new DateMathParser(dateTimeFormatter);
-            this.formatterString = formatterString;
-            this.locale = locale;
         }
 
         protected DateMathParser dateMathParser() {
@@ -406,13 +402,13 @@ public class RangeFieldMapper extends FieldMapper {
 
         if (fieldType().rangeType == RangeType.DATE
                 && (includeDefaults || (fieldType().dateTimeFormatter() != null
-                && fieldType().formatterString.equals(DateFieldMapper.DEFAULT_COMPOUND_DATE_TIME_FORMATTER_STRING) == false))) {
-            builder.field("format", fieldType().formatterString);
+                && fieldType().dateTimeFormatter().getFormatter().equals(DateFieldMapper.DEFAULT_COMPOUND_DATE_TIME_FORMATTER_STRING) == false))) {
+            builder.field("format", fieldType().dateTimeFormatter.getFormatter());
         }
         if (fieldType().rangeType == RangeType.DATE
                 && (includeDefaults || (fieldType().dateTimeFormatter() != null
-                && fieldType().locale != Locale.ROOT))) {
-            builder.field("locale", fieldType().locale);
+                && fieldType().dateTimeFormatter().getLocale() != Locale.ROOT))) {
+            builder.field("locale", fieldType().dateTimeFormatter().getLocale());
         }
         if (includeDefaults || coerce.explicit()) {
             builder.field("coerce", coerce.value());

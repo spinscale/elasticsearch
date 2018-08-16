@@ -41,13 +41,17 @@ class JavaDateFormatter implements DateFormatter {
         if (distinctZones > 1) {
             throw new IllegalArgumentException("formatters must have the same time zone");
         }
+        long distinctLocales = Arrays.stream(parsers).map(DateTimeFormatter::getLocale).distinct().count();
+        if (distinctLocales > 1) {
+            throw new IllegalArgumentException("formatters must have the same locale");
+        }
+        this.printer = printer;
+        this.format = format;
         if (parsers.length == 0) {
             this.parsers = new DateTimeFormatter[]{printer};
         } else {
             this.parsers = parsers;
         }
-        this.format = format;
-        this.printer = printer;
     }
 
     @Override

@@ -23,10 +23,9 @@ import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.SortedNumericDocValues;
 import org.apache.lucene.search.DocIdSetIterator;
+import org.elasticsearch.common.Rounding;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
-import org.elasticsearch.common.rounding.DateTimeUnit;
-import org.elasticsearch.common.rounding.Rounding;
 import org.elasticsearch.common.time.DateFormatters;
 import org.elasticsearch.common.time.DateMathParser;
 import org.elasticsearch.common.unit.TimeValue;
@@ -75,26 +74,26 @@ public class DateHistogramAggregationBuilder extends ValuesSourceAggregationBuil
     public static final String NAME = "date_histogram";
     private static DateMathParser EPOCH_MILLIS_PARSER = new DateMathParser(DateFormatters.forPattern("epoch_millis", Locale.ROOT));
 
-    public static final Map<String, DateTimeUnit> DATE_FIELD_UNITS;
+    public static final Map<String, Rounding.DateTimeUnit> DATE_FIELD_UNITS;
 
     static {
-        Map<String, DateTimeUnit> dateFieldUnits = new HashMap<>();
-        dateFieldUnits.put("year", DateTimeUnit.YEAR_OF_CENTURY);
-        dateFieldUnits.put("1y", DateTimeUnit.YEAR_OF_CENTURY);
-        dateFieldUnits.put("quarter", DateTimeUnit.QUARTER);
-        dateFieldUnits.put("1q", DateTimeUnit.QUARTER);
-        dateFieldUnits.put("month", DateTimeUnit.MONTH_OF_YEAR);
-        dateFieldUnits.put("1M", DateTimeUnit.MONTH_OF_YEAR);
-        dateFieldUnits.put("week", DateTimeUnit.WEEK_OF_WEEKYEAR);
-        dateFieldUnits.put("1w", DateTimeUnit.WEEK_OF_WEEKYEAR);
-        dateFieldUnits.put("day", DateTimeUnit.DAY_OF_MONTH);
-        dateFieldUnits.put("1d", DateTimeUnit.DAY_OF_MONTH);
-        dateFieldUnits.put("hour", DateTimeUnit.HOUR_OF_DAY);
-        dateFieldUnits.put("1h", DateTimeUnit.HOUR_OF_DAY);
-        dateFieldUnits.put("minute", DateTimeUnit.MINUTES_OF_HOUR);
-        dateFieldUnits.put("1m", DateTimeUnit.MINUTES_OF_HOUR);
-        dateFieldUnits.put("second", DateTimeUnit.SECOND_OF_MINUTE);
-        dateFieldUnits.put("1s", DateTimeUnit.SECOND_OF_MINUTE);
+        Map<String, Rounding.DateTimeUnit> dateFieldUnits = new HashMap<>();
+        dateFieldUnits.put("year", Rounding.DateTimeUnit.YEAR_OF_CENTURY);
+        dateFieldUnits.put("1y", Rounding.DateTimeUnit.YEAR_OF_CENTURY);
+        dateFieldUnits.put("quarter", Rounding.DateTimeUnit.QUARTER_OF_YEAR);
+        dateFieldUnits.put("1q", Rounding.DateTimeUnit.QUARTER_OF_YEAR);
+        dateFieldUnits.put("month", Rounding.DateTimeUnit.MONTH_OF_YEAR);
+        dateFieldUnits.put("1M", Rounding.DateTimeUnit.MONTH_OF_YEAR);
+        dateFieldUnits.put("week", Rounding.DateTimeUnit.WEEK_OF_WEEKYEAR);
+        dateFieldUnits.put("1w", Rounding.DateTimeUnit.WEEK_OF_WEEKYEAR);
+        dateFieldUnits.put("day", Rounding.DateTimeUnit.DAY_OF_MONTH);
+        dateFieldUnits.put("1d", Rounding.DateTimeUnit.DAY_OF_MONTH);
+        dateFieldUnits.put("hour", Rounding.DateTimeUnit.HOUR_OF_DAY);
+        dateFieldUnits.put("1h", Rounding.DateTimeUnit.HOUR_OF_DAY);
+        dateFieldUnits.put("minute", Rounding.DateTimeUnit.MINUTES_OF_HOUR);
+        dateFieldUnits.put("1m", Rounding.DateTimeUnit.MINUTES_OF_HOUR);
+        dateFieldUnits.put("second", Rounding.DateTimeUnit.SECOND_OF_MINUTE);
+        dateFieldUnits.put("1s", Rounding.DateTimeUnit.SECOND_OF_MINUTE);
         DATE_FIELD_UNITS = unmodifiableMap(dateFieldUnits);
     }
 
@@ -400,10 +399,10 @@ public class DateHistogramAggregationBuilder extends ValuesSourceAggregationBuil
                     // We need all not only values but also rounded values to be within
                     // [prevTransition, nextTransition].
                     final long low;
-                    DateTimeUnit intervalAsUnit = getIntervalAsDateTimeUnit();
+                    Rounding.DateTimeUnit intervalAsUnit = getIntervalAsDateTimeUnit();
                     if (intervalAsUnit != null) {
-                        final DateTimeField dateTimeField = intervalAsUnit.field(tz);
-                        low = dateTimeField.roundCeiling(prevTransition);
+                        Rounding rounding = Rounding.builder(intervalAsUnit).timeZone(timeZone()).build();
+                        low = rounding.nextRoundingValue(prevTransition);
                     } else {
                         final TimeValue intervalAsMillis = getIntervalAsTimeValue();
                         low = Math.addExact(prevTransition, intervalAsMillis.millis());
@@ -416,7 +415,7 @@ public class DateHistogramAggregationBuilder extends ValuesSourceAggregationBuil
                         // All values in this reader have the same offset despite daylight saving times.
                         // This is very common for location-based timezones such as Europe/Paris in
                         // combination with time-based indices.
-                        return DateTimeZone.forOffsetMillis(tz.getOffset(anyInstant));
+                        return ZoneOffset.ofTotalSeconds(tz.getRules().getOffset(instant).getTotalSeconds());
                     }
                 }
             }
@@ -450,7 +449,7 @@ public class DateHistogramAggregationBuilder extends ValuesSourceAggregationBuil
      *  {@code null} then it means that the interval is expressed as a fixed
      *  {@link TimeValue} and may be accessed via
      *  {@link #getIntervalAsTimeValue()}. */
-    private DateTimeUnit getIntervalAsDateTimeUnit() {
+    private Rounding.DateTimeUnit getIntervalAsDateTimeUnit() {
         if (dateHistogramInterval != null) {
             return DATE_FIELD_UNITS.get(dateHistogramInterval.toString());
         }
@@ -471,7 +470,7 @@ public class DateHistogramAggregationBuilder extends ValuesSourceAggregationBuil
 
     private Rounding createRounding(ZoneId timeZone) {
         Rounding.Builder tzRoundingBuilder;
-        DateTimeUnit intervalAsUnit = getIntervalAsDateTimeUnit();
+        Rounding.DateTimeUnit intervalAsUnit = getIntervalAsDateTimeUnit();
         if (intervalAsUnit != null) {
             tzRoundingBuilder = Rounding.builder(intervalAsUnit);
         } else {

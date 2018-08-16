@@ -20,9 +20,9 @@ package org.elasticsearch.search.aggregations.bucket.histogram;
 
 import org.apache.lucene.util.CollectionUtil;
 import org.apache.lucene.util.PriorityQueue;
+import org.elasticsearch.common.Rounding;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
-import org.elasticsearch.common.rounding.Rounding;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.search.DocValueFormat;
 import org.elasticsearch.search.aggregations.Aggregations;
@@ -185,13 +185,13 @@ public final class InternalDateHistogram extends InternalMultiBucketAggregation<
         }
 
         EmptyBucketInfo(StreamInput in) throws IOException {
-            rounding = Rounding.Streams.read(in);
+            rounding = Rounding.read(in);
             subAggregations = InternalAggregations.readAggregations(in);
             bounds = in.readOptionalWriteable(ExtendedBounds::new);
         }
 
         void writeTo(StreamOutput out) throws IOException {
-            Rounding.Streams.write(rounding, out);
+            rounding.writeTo(out);
             subAggregations.writeTo(out);
             out.writeOptionalWriteable(bounds);
         }

@@ -18,6 +18,8 @@ import org.elasticsearch.common.ParseField;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.joda.DateMathParser;
+import org.elasticsearch.common.joda.FormatDateTimeFormatter;
+import org.elasticsearch.common.joda.Joda;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.ObjectParser;
 import org.elasticsearch.common.xcontent.ToXContent;
@@ -43,6 +45,7 @@ public class StartDatafeedAction extends Action<AcknowledgedResponse> {
     public static final StartDatafeedAction INSTANCE = new StartDatafeedAction();
     public static final String NAME = "cluster:admin/xpack/ml/datafeed/start";
     public static final String TASK_NAME = "xpack/ml/datafeed";
+    public static final FormatDateTimeFormatter DATE_TIME_FORMATTER = Joda.forPattern("strict_date_optional_time||epoch_millis");
 
     private StartDatafeedAction() {
         super(NAME);
@@ -153,7 +156,7 @@ public class StartDatafeedAction extends Action<AcknowledgedResponse> {
         }
 
         static long parseDateOrThrow(String date, ParseField paramName, LongSupplier now) {
-            DateMathParser dateMathParser = new DateMathParser(DateFieldMapper.DEFAULT_DATE_TIME_FORMATTER);
+            DateMathParser dateMathParser = new DateMathParser(DATE_TIME_FORMATTER);
 
             try {
                 return dateMathParser.parse(date, now);

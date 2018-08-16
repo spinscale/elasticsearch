@@ -25,6 +25,8 @@ import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.joda.FormatDateTimeFormatter;
 import org.elasticsearch.common.joda.Joda;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.time.CompoundDateTimeFormatter;
+import org.elasticsearch.common.time.DateFormatters;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.index.mapper.DynamicTemplate.XContentFieldType;
@@ -43,10 +45,10 @@ import static org.elasticsearch.index.mapper.TypeParsers.parseDateTimeFormatter;
 public class RootObjectMapper extends ObjectMapper {
 
     public static class Defaults {
-        public static final FormatDateTimeFormatter[] DYNAMIC_DATE_TIME_FORMATTERS =
-                new FormatDateTimeFormatter[]{
+        public static final CompoundDateTimeFormatter[] DYNAMIC_DATE_TIME_FORMATTERS =
+                new CompoundDateTimeFormatter[]{
                         DateFieldMapper.DEFAULT_DATE_TIME_FORMATTER,
-                        Joda.getStrictStandardDateFormatter()
+                        DateFormatters.forPattern("yyyy/MM/dd HH:mm:ss||yyyy/MM/dd||epoch_millis")
                 };
         public static final boolean DATE_DETECTION = true;
         public static final boolean NUMERIC_DETECTION = false;
@@ -55,7 +57,7 @@ public class RootObjectMapper extends ObjectMapper {
     public static class Builder extends ObjectMapper.Builder<Builder, RootObjectMapper> {
 
         protected Explicit<DynamicTemplate[]> dynamicTemplates = new Explicit<>(new DynamicTemplate[0], false);
-        protected Explicit<FormatDateTimeFormatter[]> dynamicDateTimeFormatters = new Explicit<>(Defaults.DYNAMIC_DATE_TIME_FORMATTERS, false);
+        protected Explicit<CompoundDateTimeFormatter[]> dynamicDateTimeFormatters = new Explicit<>(Defaults.DYNAMIC_DATE_TIME_FORMATTERS, false);
         protected Explicit<Boolean> dateDetection = new Explicit<>(Defaults.DATE_DETECTION, false);
         protected Explicit<Boolean> numericDetection = new Explicit<>(Defaults.NUMERIC_DETECTION, false);
 
@@ -64,8 +66,8 @@ public class RootObjectMapper extends ObjectMapper {
             this.builder = this;
         }
 
-        public Builder dynamicDateTimeFormatter(Collection<FormatDateTimeFormatter> dateTimeFormatters) {
-            this.dynamicDateTimeFormatters = new Explicit<>(dateTimeFormatters.toArray(new FormatDateTimeFormatter[0]), true);
+        public Builder dynamicDateTimeFormatter(Collection<CompoundDateTimeFormatter> dateTimeFormatters) {
+            this.dynamicDateTimeFormatters = new Explicit<>(dateTimeFormatters.toArray(new CompoundDateTimeFormatter[0]), true);
             return this;
         }
 
@@ -140,7 +142,7 @@ public class RootObjectMapper extends ObjectMapper {
                 Version indexVersionCreated) {
             if (fieldName.equals("date_formats") || fieldName.equals("dynamic_date_formats")) {
                 if (fieldNode instanceof List) {
-                    List<FormatDateTimeFormatter> formatters = new ArrayList<>();
+                    List<CompoundDateTimeFormatter> formatters = new ArrayList<>();
                     for (Object formatter : (List<?>) fieldNode) {
                         if (formatter.toString().startsWith("epoch_")) {
                             throw new MapperParsingException("Epoch ["+ formatter +"] is not supported as dynamic date format");
@@ -192,13 +194,13 @@ public class RootObjectMapper extends ObjectMapper {
         }
     }
 
-    private Explicit<FormatDateTimeFormatter[]> dynamicDateTimeFormatters;
+    private Explicit<CompoundDateTimeFormatter[]> dynamicDateTimeFormatters;
     private Explicit<Boolean> dateDetection;
     private Explicit<Boolean> numericDetection;
     private Explicit<DynamicTemplate[]> dynamicTemplates;
 
     RootObjectMapper(String name, boolean enabled, Dynamic dynamic, Map<String, Mapper> mappers,
-                     Explicit<FormatDateTimeFormatter[]> dynamicDateTimeFormatters, Explicit<DynamicTemplate[]> dynamicTemplates,
+                     Explicit<CompoundDateTimeFormatter[]> dynamicDateTimeFormatters, Explicit<DynamicTemplate[]> dynamicTemplates,
                      Explicit<Boolean> dateDetection, Explicit<Boolean> numericDetection, Settings settings) {
         super(name, name, enabled, Nested.NO, dynamic, mappers, settings);
         this.dynamicTemplates = dynamicTemplates;
@@ -214,7 +216,7 @@ public class RootObjectMapper extends ObjectMapper {
         // set everything to they implicit default value so that they are not
         // applied at merge time
         update.dynamicTemplates = new Explicit<>(new DynamicTemplate[0], false);
-        update.dynamicDateTimeFormatters = new Explicit<FormatDateTimeFormatter[]>(Defaults.DYNAMIC_DATE_TIME_FORMATTERS, false);
+        update.dynamicDateTimeFormatters = new Explicit<>(Defaults.DYNAMIC_DATE_TIME_FORMATTERS, false);
         update.dateDetection = new Explicit<>(Defaults.DATE_DETECTION, false);
         update.numericDetection = new Explicit<>(Defaults.NUMERIC_DETECTION, false);
         return update;
@@ -228,7 +230,7 @@ public class RootObjectMapper extends ObjectMapper {
         return this.numericDetection.value();
     }
 
-    public FormatDateTimeFormatter[] dynamicDateTimeFormatters() {
+    public CompoundDateTimeFormatter[] dynamicDateTimeFormatters() {
         return dynamicDateTimeFormatters.value();
     }
 
@@ -301,8 +303,9 @@ public class RootObjectMapper extends ObjectMapper {
 
         if (dynamicDateTimeFormatters.explicit() || includeDefaults) {
             builder.startArray("dynamic_date_formats");
-            for (FormatDateTimeFormatter dateTimeFormatter : dynamicDateTimeFormatters.value()) {
-                builder.value(dateTimeFormatter.format());
+            for (CompoundDateTimeFormatter dateTimeFormatter : dynamicDateTimeFormatters.value()) {
+                // TODO FIXME
+//                builder.value(dateTimeFormatter.format());
             }
             builder.endArray();
         }

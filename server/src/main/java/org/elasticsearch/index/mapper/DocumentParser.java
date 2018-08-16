@@ -24,7 +24,7 @@ import org.apache.lucene.index.IndexableField;
 import org.elasticsearch.Version;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.collect.Tuple;
-import org.elasticsearch.common.joda.FormatDateTimeFormatter;
+import org.elasticsearch.common.time.CompoundDateTimeFormatter;
 import org.elasticsearch.common.xcontent.LoggingDeprecationHandler;
 import org.elasticsearch.common.xcontent.XContentHelper;
 import org.elasticsearch.common.xcontent.XContentParser;
@@ -663,10 +663,10 @@ final class DocumentParser {
         return new NumberFieldMapper.Builder(name, NumberFieldMapper.NumberType.FLOAT);
     }
 
-    private static Mapper.Builder<?, ?> newDateBuilder(String name, FormatDateTimeFormatter dateTimeFormatter, Version indexCreated) {
+    private static Mapper.Builder<?, ?> newDateBuilder(String name, CompoundDateTimeFormatter dateTimeFormatter, Version indexCreated) {
         DateFieldMapper.Builder builder = new DateFieldMapper.Builder(name);
         if (dateTimeFormatter != null) {
-            builder.dateTimeFormatter(dateTimeFormatter);
+            builder.dateTimeFormatter(dateTimeFormatter.getFormatter(), dateTimeFormatter.getLocale());
         }
         return builder;
     }
@@ -707,9 +707,9 @@ final class DocumentParser {
                 // We refuse to match pure numbers, which are too likely to be
                 // false positives with date formats that include eg.
                 // `epoch_millis` or `YYYY`
-                for (FormatDateTimeFormatter dateTimeFormatter : context.root().dynamicDateTimeFormatters()) {
+                for (CompoundDateTimeFormatter dateTimeFormatter : context.root().dynamicDateTimeFormatters()) {
                     try {
-                        dateTimeFormatter.parser().parseMillis(text);
+                        dateTimeFormatter.parse(text);
                     } catch (IllegalArgumentException e) {
                         // failure to parse this, continue
                         continue;
@@ -720,8 +720,9 @@ final class DocumentParser {
                     }
                     if (builder instanceof DateFieldMapper.Builder) {
                         DateFieldMapper.Builder dateBuilder = (DateFieldMapper.Builder) builder;
+                        // TODO does this make sense checking for false?
                         if (dateBuilder.isDateTimeFormatterSet() == false) {
-                            dateBuilder.dateTimeFormatter(dateTimeFormatter);
+                            dateBuilder.dateTimeFormatter(dateBuilder.format(), dateBuilder.locale());
                         }
                     }
                     return builder;

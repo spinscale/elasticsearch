@@ -25,12 +25,11 @@ import org.elasticsearch.common.geo.GeoHashUtils;
 import org.elasticsearch.common.io.stream.NamedWriteable;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
-import org.elasticsearch.common.joda.DateMathParser;
-import org.elasticsearch.common.joda.FormatDateTimeFormatter;
-import org.elasticsearch.common.joda.Joda;
 import org.elasticsearch.common.network.InetAddresses;
 import org.elasticsearch.common.network.NetworkAddress;
-import org.joda.time.DateTimeZone;
+import org.elasticsearch.common.time.CompoundDateTimeFormatter;
+import org.elasticsearch.common.time.DateFormatters;
+import org.elasticsearch.common.time.DateMathParser;
 
 import java.io.IOException;
 import java.net.InetAddress;
@@ -38,6 +37,8 @@ import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
 import java.text.NumberFormat;
 import java.text.ParseException;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Locale;
@@ -170,18 +171,20 @@ public interface DocValueFormat extends NamedWriteable {
 
         public static final String NAME = "date_time";
 
-        final FormatDateTimeFormatter formatter;
-        final DateTimeZone timeZone;
+        final String format;
+        final CompoundDateTimeFormatter formatter;
+        final ZoneId timeZone;
         private final DateMathParser parser;
 
-        public DateTime(FormatDateTimeFormatter formatter, DateTimeZone timeZone) {
-            this.formatter = Objects.requireNonNull(formatter);
+        public DateTime(String format, ZoneId timeZone) {
+            this.format = Objects.requireNonNull(format);
+            this.formatter = DateFormatters.forPattern(this.format);
             this.timeZone = Objects.requireNonNull(timeZone);
             this.parser = new DateMathParser(formatter);
         }
 
         public DateTime(StreamInput in) throws IOException {
-            this(Joda.forPattern(in.readString()), DateTimeZone.forID(in.readString()));
+            this(in.readString(), ZoneId.of(in.readString()));
         }
 
         @Override
@@ -191,13 +194,13 @@ public interface DocValueFormat extends NamedWriteable {
 
         @Override
         public void writeTo(StreamOutput out) throws IOException {
-            out.writeString(formatter.format());
-            out.writeString(timeZone.getID());
+            out.writeString(format);
+            out.writeString(timeZone.getId());
         }
 
         @Override
         public String format(long value) {
-            return formatter.printer().withZone(timeZone).print(value);
+            return formatter.format(Instant.ofEpochMilli(value).atZone(timeZone));
         }
 
         @Override
@@ -212,7 +215,7 @@ public interface DocValueFormat extends NamedWriteable {
 
         @Override
         public long parseLong(String value, boolean roundUp, LongSupplier now) {
-            return parser.parse(value, now, roundUp, timeZone);
+            return parser.parse(value, now, roundUp, timeZone).toEpochMilli();
         }
 
         @Override
