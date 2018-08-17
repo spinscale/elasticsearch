@@ -33,8 +33,8 @@ import org.elasticsearch.search.aggregations.bucket.histogram.Histogram;
 import org.elasticsearch.search.aggregations.bucket.histogram.Histogram.Bucket;
 import org.elasticsearch.test.ESIntegTestCase;
 import org.elasticsearch.test.hamcrest.ElasticsearchAssertions;
-import org.joda.time.DateTimeZone;
 
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
@@ -66,7 +66,7 @@ public class IndicesRequestCacheIT extends ESIntegTestCase {
         // which used to not work well with the query cache because of the handles stream output
         // see #9500
         final SearchResponse r1 = client.prepareSearch("index").setSize(0).setSearchType(SearchType.QUERY_THEN_FETCH)
-                .addAggregation(dateHistogram("histo").field("f").timeZone(DateTimeZone.forID("+01:00")).minDocCount(0)
+                .addAggregation(dateHistogram("histo").field("f").timeZone(ZoneId.of("+01:00")).minDocCount(0)
                         .dateHistogramInterval(DateHistogramInterval.MONTH))
                 .get();
         assertSearchResponse(r1);
@@ -78,7 +78,7 @@ public class IndicesRequestCacheIT extends ESIntegTestCase {
         for (int i = 0; i < 10; ++i) {
             final SearchResponse r2 = client.prepareSearch("index").setSize(0)
                     .setSearchType(SearchType.QUERY_THEN_FETCH).addAggregation(dateHistogram("histo").field("f")
-                            .timeZone(DateTimeZone.forID("+01:00")).minDocCount(0).dateHistogramInterval(DateHistogramInterval.MONTH))
+                            .timeZone(ZoneId.of("+01:00")).minDocCount(0).dateHistogramInterval(DateHistogramInterval.MONTH))
                     .get();
             assertSearchResponse(r2);
             Histogram h1 = r1.getAggregations().get("histo");

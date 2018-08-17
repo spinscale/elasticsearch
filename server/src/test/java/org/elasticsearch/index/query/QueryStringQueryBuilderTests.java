@@ -197,7 +197,7 @@ public class QueryStringQueryBuilderTests extends AbstractQueryTestCase<QueryStr
         String quoteFieldSuffix = instance.quoteFieldSuffix();
         Float tieBreaker = instance.tieBreaker();
         String minimumShouldMatch = instance.minimumShouldMatch();
-        String timeZone = instance.timeZone() == null ? null : instance.timeZone().getID();
+        String timeZone = instance.timeZone() == null ? null : instance.timeZone().getId();
         boolean autoGenerateSynonymsPhraseQuery = instance.autoGenerateSynonymsPhraseQuery();
         boolean fuzzyTranspositions = instance.fuzzyTranspositions();
 

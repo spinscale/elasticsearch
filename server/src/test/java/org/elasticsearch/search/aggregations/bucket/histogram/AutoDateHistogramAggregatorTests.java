@@ -33,6 +33,7 @@ import org.apache.lucene.store.Directory;
 import org.elasticsearch.Version;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.time.DateFormatters;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.mapper.DateFieldMapper;
 import org.elasticsearch.search.aggregations.AggregationBuilders;
@@ -41,12 +42,12 @@ import org.elasticsearch.search.aggregations.MultiBucketConsumerService;
 import org.elasticsearch.search.aggregations.metrics.Stats;
 import org.hamcrest.Matchers;
 import org.joda.time.DateTime;
-import org.joda.time.DateTimeZone;
 import org.joda.time.chrono.ISOChronology;
 import org.joda.time.format.DateTimeFormat;
 import org.joda.time.format.DateTimeFormatter;
 
 import java.io.IOException;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -364,7 +365,7 @@ public class AutoDateHistogramAggregatorTests extends AggregatorTestCase {
     public void testIntervalDayWithTZ() throws IOException {
         testSearchCase(new MatchAllDocsQuery(),
                 Arrays.asList("2017-02-01", "2017-02-02", "2017-02-02", "2017-02-03", "2017-02-03", "2017-02-03", "2017-02-05"),
-                aggregation -> aggregation.setNumBuckets(5).field(DATE_FIELD).timeZone(DateTimeZone.forOffsetHours(-1)), histogram -> {
+                aggregation -> aggregation.setNumBuckets(5).field(DATE_FIELD).timeZone(ZoneOffset.ofHours(-1)), histogram -> {
                     List<? extends Histogram.Bucket> buckets = histogram.getBuckets();
                     assertEquals(4, buckets.size());
 
@@ -386,7 +387,7 @@ public class AutoDateHistogramAggregatorTests extends AggregatorTestCase {
                 });
         testSearchAndReduceCase(new MatchAllDocsQuery(),
                 Arrays.asList("2017-02-01", "2017-02-02", "2017-02-02", "2017-02-03", "2017-02-03", "2017-02-03", "2017-02-05"),
-                aggregation -> aggregation.setNumBuckets(5).field(DATE_FIELD).timeZone(DateTimeZone.forOffsetHours(-1)), histogram -> {
+                aggregation -> aggregation.setNumBuckets(5).field(DATE_FIELD).timeZone(ZoneOffset.ofHours(-1)), histogram -> {
                     List<? extends Histogram.Bucket> buckets = histogram.getBuckets();
                     assertEquals(5, buckets.size());
 
@@ -539,7 +540,7 @@ public class AutoDateHistogramAggregatorTests extends AggregatorTestCase {
                         "2017-02-01T16:48:00.000Z",
                         "2017-02-01T16:59:00.000Z"
                 ),
-                aggregation -> aggregation.setNumBuckets(8).field(DATE_FIELD).timeZone(DateTimeZone.forOffsetHours(-1)),
+                aggregation -> aggregation.setNumBuckets(8).field(DATE_FIELD).timeZone(ZoneOffset.ofHours(-1)),
                 histogram -> {
                     List<? extends Histogram.Bucket> buckets = histogram.getBuckets();
                     assertEquals(10, buckets.size());
@@ -598,7 +599,7 @@ public class AutoDateHistogramAggregatorTests extends AggregatorTestCase {
                         "2017-02-01T16:48:00.000Z",
                         "2017-02-01T16:59:00.000Z"
                 ),
-                aggregation -> aggregation.setNumBuckets(10).field(DATE_FIELD).timeZone(DateTimeZone.forOffsetHours(-1)),
+                aggregation -> aggregation.setNumBuckets(10).field(DATE_FIELD).timeZone(ZoneOffset.ofHours(-1)),
                 histogram -> {
                     List<? extends Histogram.Bucket> buckets = histogram.getBuckets();
                     assertEquals(8, buckets.size());
@@ -1327,6 +1328,6 @@ public class AutoDateHistogramAggregatorTests extends AggregatorTestCase {
     }
 
     private static long asLong(String dateTime) {
-        return DateFieldMapper.DEFAULT_DATE_TIME_FORMATTER.parser().parseDateTime(dateTime).getMillis();
+        return DateFormatters.toZonedDateTime(DateFieldMapper.DEFAULT_DATE_TIME_FORMATTER.parse(dateTime)).toInstant().toEpochMilli();
     }
 }
