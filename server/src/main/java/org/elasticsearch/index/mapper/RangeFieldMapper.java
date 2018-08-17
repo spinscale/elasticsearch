@@ -146,7 +146,8 @@ public class RangeFieldMapper extends FieldMapper {
             super.setupFieldType(context);
             CompoundDateTimeFormatter dateTimeFormatter = fieldType().dateTimeFormatter;
             if (fieldType().rangeType == RangeType.DATE) {
-                if (Objects.equals(builder.formatter, formatter) == false || Objects.equals(builder.locale, locale) == false) {
+                if (Objects.equals(builder.formatter, fieldType().dateTimeFormatter().getFormatter()) == false ||
+                    Objects.equals(builder.locale, fieldType().dateTimeFormatter().getLocale()) == false) {
                     fieldType().setDateTimeFormatter(DateFormatters.forPattern(formatter, locale));
                 }
             } else if (dateTimeFormatter != null) {
@@ -402,7 +403,8 @@ public class RangeFieldMapper extends FieldMapper {
 
         if (fieldType().rangeType == RangeType.DATE
                 && (includeDefaults || (fieldType().dateTimeFormatter() != null
-                && fieldType().dateTimeFormatter().getFormatter().equals(DateFieldMapper.DEFAULT_COMPOUND_DATE_TIME_FORMATTER_STRING) == false))) {
+                && fieldType().dateTimeFormatter().getFormatter()
+                        .equals(DateFieldMapper.DEFAULT_COMPOUND_DATE_TIME_FORMATTER.getFormatter()) == false))) {
             builder.field("format", fieldType().dateTimeFormatter.getFormatter());
         }
         if (fieldType().rangeType == RangeType.DATE

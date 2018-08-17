@@ -366,7 +366,7 @@ public class DateFormatters {
      * An ISO date formatter that formats or parses a date without an offset, such as '2011-12-03'.
      */
     private static final DateFormatter STRICT_DATE = new JavaDateFormatter("strict_date",
-        DateTimeFormatter.ISO_LOCAL_DATE.withResolverStyle(ResolverStyle.LENIENT));
+        DateTimeFormatter.ISO_LOCAL_DATE.withResolverStyle(ResolverStyle.LENIENT).withLocale(Locale.ROOT));
 
     /*
      * A date formatter that formats or parses a date plus an hour without an offset, such as '2011-12-03T01'.

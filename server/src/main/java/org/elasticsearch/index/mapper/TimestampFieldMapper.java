@@ -19,45 +19,6 @@
 
 package org.elasticsearch.index.mapper;
 
-import org.apache.lucene.document.LongPoint;
-import org.apache.lucene.document.SortedNumericDocValuesField;
-import org.apache.lucene.document.StoredField;
-import org.apache.lucene.index.IndexOptions;
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.IndexableField;
-import org.apache.lucene.index.PointValues;
-import org.apache.lucene.index.Term;
-import org.apache.lucene.search.BoostQuery;
-import org.apache.lucene.search.DocValuesFieldExistsQuery;
-import org.apache.lucene.search.IndexOrDocValuesQuery;
-import org.apache.lucene.search.Query;
-import org.apache.lucene.search.TermQuery;
-import org.apache.lucene.util.BytesRef;
-import org.elasticsearch.common.Explicit;
-import org.elasticsearch.common.Nullable;
-import org.elasticsearch.common.geo.ShapeRelation;
-import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.time.CompoundDateTimeFormatter;
-import org.elasticsearch.common.time.DateFormatters;
-import org.elasticsearch.common.time.DateMathParser;
-import org.elasticsearch.common.xcontent.XContentBuilder;
-import org.elasticsearch.common.xcontent.support.XContentMapValues;
-import org.elasticsearch.index.fielddata.IndexFieldData;
-import org.elasticsearch.index.fielddata.IndexNumericFieldData.NumericType;
-import org.elasticsearch.index.fielddata.plain.DocValuesIndexFieldData;
-import org.elasticsearch.index.query.QueryRewriteContext;
-import org.elasticsearch.index.query.QueryShardContext;
-import org.elasticsearch.search.DocValueFormat;
-import org.joda.time.DateTimeZone;
-
-import java.io.IOException;
-import java.time.Instant;
-import java.time.ZoneOffset;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-
 /**
  * A {@link FieldMapper} for dates with nanosecond resolution.
  * // TODO write about its limitations here, allowed nanosecond/millisecond range
@@ -139,7 +100,8 @@ public class TimestampFieldMapper /*extends FieldMapper*/ {
 //        }
 //
 //        @Override
-//        public Mapper.Builder<?,?> parse(String name, Map<String, Object> node, ParserContext parserContext) throws MapperParsingException {
+//        public Mapper.Builder<?,?> parse(String name, Map<String, Object> node, ParserContext parserContext)
+//                                  throws MapperParsingException {
 //            Builder builder = new Builder(name);
 //            TypeParsers.parseField(builder, name, node, parserContext);
 //            for (Iterator<Map.Entry<String, Object>> iterator = node.entrySet().iterator(); iterator.hasNext();) {
@@ -288,7 +250,8 @@ public class TimestampFieldMapper /*extends FieldMapper*/ {
 //        }
 //
 //        long parseToNanos(Object value, boolean roundUp,
-//                                        @Nullable ZoneOffset zone, @Nullable DateMathParser forcedDateParser, QueryRewriteContext context) {
+//                                        @Nullable ZoneOffset zone, @Nullable DateMathParser forcedDateParser,
+//                                        QueryRewriteContext context) {
 //            DateMathParser dateParser = dateMathParser();
 //            if (forcedDateParser != null) {
 //                dateParser = forcedDateParser;
@@ -307,7 +270,8 @@ public class TimestampFieldMapper /*extends FieldMapper*/ {
 //        @Override
 //        public Relation isFieldWithinQuery(IndexReader reader,
 //                                           Object from, Object to, boolean includeLower, boolean includeUpper,
-//                                           DateTimeZone timeZone, DateMathParser dateParser, QueryRewriteContext context) throws IOException {
+//                                           DateTimeZone timeZone, DateMathParser dateParser, QueryRewriteContext context)
+//                                          throws IOException {
 //            if (dateParser == null) {
 //                dateParser = this.dateMathParser;
 //            }

@@ -35,6 +35,7 @@ import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.Explicit;
 import org.elasticsearch.common.Nullable;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.geo.ShapeRelation;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.time.CompoundDateTimeFormatter;
@@ -137,7 +138,8 @@ public class DateFieldMapper extends FieldMapper {
         @Override
         protected void setupFieldType(BuilderContext context) {
             super.setupFieldType(context);
-            if (locale.equals(fieldType().locale) == false || format.equals(fieldType().dateTimeFormatterString) == false) {
+            if (Objects.equals(locale, fieldType().locale) == false ||
+                Objects.equals(format, fieldType().dateTimeFormatterString) == false && Strings.isEmpty(format) == false) {
                 fieldType().setDateTimeFormatter(format, locale);
             }
         }
@@ -398,12 +400,12 @@ public class DateFieldMapper extends FieldMapper {
         public DocValueFormat docValueFormat(@Nullable String format, ZoneId timeZone) {
             CompoundDateTimeFormatter dateTimeFormatter = this.dateTimeFormatter;
             if (format != null) {
-                dateTimeFormatter = DateFormatters.forPattern(format);
+                dateTimeFormatter = DateFormatters.forPattern(format, locale);
             }
             if (timeZone == null) {
                 timeZone = ZoneOffset.UTC;
             }
-            return new DocValueFormat.DateTime(format, timeZone);
+            return new DocValueFormat.DateTime(dateTimeFormatter.getFormatter(), timeZone);
         }
     }
 

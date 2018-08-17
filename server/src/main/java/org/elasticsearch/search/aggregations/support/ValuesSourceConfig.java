@@ -31,7 +31,6 @@ import org.elasticsearch.script.Script;
 import org.elasticsearch.script.SearchScript;
 import org.elasticsearch.search.DocValueFormat;
 import org.elasticsearch.search.aggregations.AggregationExecutionException;
-import org.joda.time.DateTimeZone;
 
 import java.io.IOException;
 import java.time.ZoneId;

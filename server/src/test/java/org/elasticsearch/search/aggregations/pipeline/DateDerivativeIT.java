@@ -209,7 +209,8 @@ public class DateDerivativeIT extends ESIntegTestCase {
         ZoneId timezone = ZoneId.of("CET");
         CompoundDateTimeFormatter formatter = DateFormatters.forPattern("yyyy-MM-ddTHH:mm:ss").withZone(timezone);
         addNTimes(1, IDX_DST_START, DateFormatters.toZonedDateTime(formatter.parse("2012-03-24T01:00:00")), builders);
-        addNTimes(2, IDX_DST_START, DateFormatters.toZonedDateTime(formatter.parse("2012-03-25T01:00:00")), builders); // day with dst shift, only 23h long
+        // day with dst shift, only 23h long
+        addNTimes(2, IDX_DST_START, DateFormatters.toZonedDateTime(formatter.parse("2012-03-25T01:00:00")), builders);
         addNTimes(3, IDX_DST_START, DateFormatters.toZonedDateTime(formatter.parse("2012-03-26T01:00:00")), builders);
         addNTimes(4, IDX_DST_START, DateFormatters.toZonedDateTime(formatter.parse("2012-03-27T01:00:00")), builders);
         indexRandom(true, builders);
@@ -249,7 +250,8 @@ public class DateDerivativeIT extends ESIntegTestCase {
 
         CompoundDateTimeFormatter formatter = DateFormatters.forPattern("yyyy-MM-ddTHH:mm:ss").withZone(timezone);
         addNTimes(1, IDX_DST_END, DateFormatters.toZonedDateTime(formatter.parse("2012-10-27T01:00:00")), builders);
-        addNTimes(2, IDX_DST_END, DateFormatters.toZonedDateTime(formatter.parse("2012-10-28T01:00:00")), builders); // day with dst shift -1h, 25h long
+        // day with dst shift -1h, 25h long
+        addNTimes(2, IDX_DST_END, DateFormatters.toZonedDateTime(formatter.parse("2012-10-28T01:00:00")), builders);
         addNTimes(3, IDX_DST_END, DateFormatters.toZonedDateTime(formatter.parse("2012-10-29T01:00:00")), builders);
         addNTimes(4, IDX_DST_END, DateFormatters.toZonedDateTime(formatter.parse("2012-10-30T01:00:00")), builders);
         indexRandom(true, builders);

@@ -26,9 +26,7 @@ import org.elasticsearch.common.io.stream.NamedWriteableAwareStreamInput;
 import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.io.stream.NamedWriteableRegistry.Entry;
 import org.elasticsearch.common.io.stream.StreamInput;
-import org.elasticsearch.common.joda.Joda;
 import org.elasticsearch.common.network.InetAddresses;
-import org.elasticsearch.common.time.DateFormatters;
 import org.elasticsearch.test.ESTestCase;
 import org.joda.time.DateTimeZone;
 
@@ -69,7 +67,7 @@ public class DocValueFormatTests extends ESTestCase {
         vf = in.readNamedWriteable(DocValueFormat.class);
         assertEquals(DocValueFormat.DateTime.class, vf.getClass());
         assertEquals("epoch_second", ((DocValueFormat.DateTime) vf).formatter.getFormatter());
-        assertEquals(DateTimeZone.forOffsetHours(1), ((DocValueFormat.DateTime) vf).timeZone);
+        assertEquals(ZoneOffset.ofHours(1), ((DocValueFormat.DateTime) vf).timeZone);
 
         out = new BytesStreamOutput();
         out.writeNamedWriteable(DocValueFormat.GEOHASH);

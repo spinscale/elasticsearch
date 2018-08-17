@@ -66,6 +66,7 @@ import org.junit.Before;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.time.ZoneOffset;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -1093,8 +1094,8 @@ public class CompositeAggregatorTests extends AggregatorTestCase {
                 },
                 (result) -> {}
             ));
-        assertThat(exc.getCause(), instanceOf(IllegalArgumentException.class));
-        assertThat(exc.getCause().getMessage(), containsString("Parse failure"));
+        assertThat(exc.getCause(), instanceOf(DateTimeParseException.class));
+        assertThat(exc.getCause().getMessage(), containsString("could not be parsed"));
     }
 
     public void testWithDateHistogramAndTimeZone() throws IOException {
