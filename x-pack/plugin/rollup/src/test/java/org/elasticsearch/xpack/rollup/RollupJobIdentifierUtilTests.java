@@ -25,6 +25,7 @@ import org.elasticsearch.xpack.core.rollup.job.RollupJobConfig;
 import org.elasticsearch.xpack.core.rollup.job.TermsGroupConfig;
 import org.joda.time.DateTimeZone;
 
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -129,7 +130,7 @@ public class RollupJobIdentifierUtilTests extends ESTestCase {
 
         DateHistogramAggregationBuilder builder = new DateHistogramAggregationBuilder("foo").field("foo")
                 .dateHistogramInterval(new DateHistogramInterval("1h"))
-                .timeZone(DateTimeZone.UTC);
+                .timeZone(ZoneOffset.UTC);
 
         RuntimeException e = expectThrows(RuntimeException.class, () -> RollupJobIdentifierUtils.findBestJobs(builder, caps));
         assertThat(e.getMessage(), equalTo("There is not a rollup job that has a [date_histogram] agg on field " +

@@ -34,6 +34,8 @@ import org.elasticsearch.search.aggregations.BucketOrder;
 import org.joda.time.DateTimeZone;
 
 import java.io.IOException;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -166,13 +168,13 @@ public class DateHistogramTests extends BaseAggregationTestCase<DateHistogramAgg
                     assertNull(builder.rewriteTimeZone(shardContextThatCrosses));
 
                     // fixed timeZone => no rewrite
-                    DateTimeZone tz = DateTimeZone.forOffsetHours(1);
+                    ZoneId tz = ZoneOffset.ofHours(1);
                     builder.timeZone(tz);
                     assertSame(tz, builder.rewriteTimeZone(shardContextThatDoesntCross));
                     assertSame(tz, builder.rewriteTimeZone(shardContextThatCrosses));
 
                     // daylight-saving-times => rewrite if doesn't cross
-                    tz = DateTimeZone.forID("Europe/Paris");
+                    tz = ZoneId.of("Europe/Paris");
                     builder.timeZone(tz);
                     assertEquals(DateTimeZone.forOffsetHours(1), builder.rewriteTimeZone(shardContextThatDoesntCross));
                     assertSame(tz, builder.rewriteTimeZone(shardContextThatCrosses));

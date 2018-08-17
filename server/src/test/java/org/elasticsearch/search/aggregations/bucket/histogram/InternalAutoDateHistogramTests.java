@@ -19,8 +19,8 @@
 
 package org.elasticsearch.search.aggregations.bucket.histogram;
 
+import org.elasticsearch.common.Rounding;
 import org.elasticsearch.common.io.stream.Writeable;
-import org.elasticsearch.common.rounding.DateTimeUnit;
 import org.elasticsearch.search.DocValueFormat;
 import org.elasticsearch.search.aggregations.InternalAggregations;
 import org.elasticsearch.search.aggregations.ParsedMultiBucketAggregation;
@@ -29,10 +29,10 @@ import org.elasticsearch.search.aggregations.bucket.histogram.InternalAutoDateHi
 import org.elasticsearch.search.aggregations.pipeline.PipelineAggregator;
 import org.elasticsearch.test.InternalMultiBucketAggregationTestCase;
 import org.joda.time.DateTime;
-import org.joda.time.DateTimeZone;
 
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -89,16 +89,16 @@ public class InternalAutoDateHistogramTests extends InternalMultiBucketAggregati
      */
     public void testGetAppropriateRoundingUsesCorrectIntervals() {
         RoundingInfo[] roundings = new RoundingInfo[6];
-        DateTimeZone timeZone = DateTimeZone.UTC;
+        ZoneId timeZone = ZoneOffset.UTC;
         // Since we pass 0 as the starting index to getAppropriateRounding, we'll also use
         // an innerInterval that is quite large, such that targetBuckets * roundings[i].getMaximumInnerInterval()
         // will be larger than the estimate.
-        roundings[0] = new RoundingInfo(createRounding(DateTimeUnit.SECOND_OF_MINUTE, timeZone),
-            1000L, "s", 1000);
-        roundings[1] = new RoundingInfo(createRounding(DateTimeUnit.MINUTES_OF_HOUR, timeZone),
-            60 * 1000L, "m", 1, 5, 10, 30);
-        roundings[2] = new RoundingInfo(createRounding(DateTimeUnit.HOUR_OF_DAY, timeZone),
-            60 * 60 * 1000L, "h", 1, 3, 12);
+        roundings[0] = new RoundingInfo(createRounding(Rounding.DateTimeUnit.SECOND_OF_MINUTE, timeZone),
+            1000L, "s",1000);
+        roundings[1] = new RoundingInfo(createRounding(Rounding.DateTimeUnit.MINUTES_OF_HOUR, timeZone),
+            60 * 1000L, "m",1, 5, 10, 30);
+        roundings[2] = new RoundingInfo(createRounding(Rounding.DateTimeUnit.HOUR_OF_DAY, timeZone),
+            60 * 60 * 1000L, "h",1, 3, 12);
 
         OffsetDateTime timestamp = Instant.parse("2018-01-01T00:00:01.000Z").atOffset(ZoneOffset.UTC);
         // We want to pass a roundingIdx of zero, because in order to reproduce this bug, we need the function

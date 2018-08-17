@@ -20,6 +20,7 @@ package org.elasticsearch.search.aggregations.bucket;
 
 import org.elasticsearch.action.index.IndexRequestBuilder;
 import org.elasticsearch.action.search.SearchResponse;
+import org.elasticsearch.common.time.DateFormatters;
 import org.elasticsearch.index.mapper.DateFieldMapper;
 import org.elasticsearch.search.aggregations.bucket.histogram.DateHistogramInterval;
 import org.elasticsearch.search.aggregations.bucket.histogram.Histogram;
@@ -30,6 +31,7 @@ import org.junit.After;
 import org.junit.Before;
 
 import java.io.IOException;
+import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 
@@ -50,8 +52,8 @@ public class DateHistogramOffsetIT extends ESIntegTestCase {
 
     private static final String DATE_FORMAT = "yyyy-MM-dd:hh-mm-ss";
 
-    private DateTime date(String date) {
-        return DateFieldMapper.DEFAULT_DATE_TIME_FORMATTER.parser().parseDateTime(date);
+    private ZonedDateTime date(String date) {
+        return DateFormatters.toZonedDateTime(DateFieldMapper.DEFAULT_DATE_TIME_FORMATTER.parse(date));
     }
 
     @Before
@@ -64,7 +66,7 @@ public class DateHistogramOffsetIT extends ESIntegTestCase {
         internalCluster().wipeIndices("idx2");
     }
 
-    private void prepareIndex(DateTime date, int numHours, int stepSizeHours, int idxIdStart) throws IOException, InterruptedException, ExecutionException {
+    private void prepareIndex(ZonedDateTime date, int numHours, int stepSizeHours, int idxIdStart) throws IOException, InterruptedException, ExecutionException {
         IndexRequestBuilder[] reqs = new IndexRequestBuilder[numHours];
         for (int i = idxIdStart; i < idxIdStart + reqs.length; i++) {
             reqs[i - idxIdStart] = client().prepareIndex("idx2", "type", "" + i).setSource(jsonBuilder().startObject().timeField("date", date).endObject());

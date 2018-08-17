@@ -27,6 +27,8 @@ import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.joda.FormatDateTimeFormatter;
 import org.elasticsearch.common.joda.Joda;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.time.CompoundDateTimeFormatter;
+import org.elasticsearch.common.time.DateFormatters;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentParser;
@@ -37,10 +39,10 @@ import org.elasticsearch.search.DocValueFormat;
 import org.elasticsearch.search.SearchParseException;
 import org.elasticsearch.search.internal.SearchContext;
 import org.elasticsearch.test.ESTestCase;
-import org.joda.time.DateTimeZone;
 import org.joda.time.Instant;
 
 import java.io.IOException;
+import java.time.ZoneOffset;
 
 import static java.lang.Math.max;
 import static java.lang.Math.min;
@@ -101,8 +103,8 @@ public class ExtendedBoundsTests extends ESTestCase {
                 new IndexSettings(IndexMetaData.builder("foo").settings(indexSettings).build(), indexSettings), null, null, null, null,
                 null, xContentRegistry(), writableRegistry(), null, null, () -> now, null);
         when(context.getQueryShardContext()).thenReturn(qsc);
-        FormatDateTimeFormatter formatter = Joda.forPattern("dateOptionalTime");
-        DocValueFormat format = new DocValueFormat.DateTime(formatter, DateTimeZone.UTC);
+        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("dateOptionalTime");
+        DocValueFormat format = new DocValueFormat.DateTime(formatter.getFormatter(), ZoneOffset.UTC);
 
         ExtendedBounds expected = randomParsedExtendedBounds();
         ExtendedBounds parsed = unparsed(expected).parseAndValidate("test", context, format);

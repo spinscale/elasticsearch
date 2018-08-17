@@ -34,15 +34,18 @@ import org.elasticsearch.search.aggregations.bucket.range.Range.Bucket;
 import org.elasticsearch.search.aggregations.metrics.Sum;
 import org.elasticsearch.test.ESIntegTestCase;
 import org.hamcrest.Matchers;
-import org.joda.time.DateTime;
-import org.joda.time.DateTimeZone;
 
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.time.format.TextStyle;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
@@ -70,12 +73,12 @@ public class DateRangeIT extends ESIntegTestCase {
                 .endObject());
     }
 
-    private static DateTime date(int month, int day) {
-        return date(month, day, DateTimeZone.UTC);
+    private static ZonedDateTime date(int month, int day) {
+        return date(month, day, ZoneOffset.UTC);
     }
 
-    private static DateTime date(int month, int day, DateTimeZone timezone) {
-        return new DateTime(2012, month, day, 0, 0, timezone);
+    private static ZonedDateTime date(int month, int day, ZoneId timezone) {
+        return ZonedDateTime.of(2012, month, day, 0, 0, 0, 0, timezone);
     }
 
     private static int numDocs;
@@ -128,7 +131,7 @@ public class DateRangeIT extends ESIntegTestCase {
                 .prepareSearch("idx")
                 .addAggregation(
                         rangeBuilder.addUnboundedTo("a long time ago", "now-50y").addRange("recently", "now-50y", "now-1y")
-                                .addUnboundedFrom("last year", "now-1y").timeZone(DateTimeZone.forID("EST"))).execute().actionGet();
+                                .addUnboundedFrom("last year", "now-1y").timeZone(ZoneId.of("EST"))).execute().actionGet();
 
         assertSearchResponse(response);
 
@@ -176,8 +179,8 @@ public class DateRangeIT extends ESIntegTestCase {
         Range.Bucket bucket = buckets.get(0);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("*-2012-02-15T00:00:00.000Z"));
-        assertThat(((DateTime) bucket.getFrom()), nullValue());
-        assertThat(((DateTime) bucket.getTo()), equalTo(date(2, 15)));
+        assertThat(((ZonedDateTime) bucket.getFrom()), nullValue());
+        assertThat(((ZonedDateTime) bucket.getTo()), equalTo(date(2, 15)));
         assertThat(bucket.getFromAsString(), nullValue());
         assertThat(bucket.getToAsString(), equalTo("2012-02-15T00:00:00.000Z"));
         assertThat(bucket.getDocCount(), equalTo(2L));
@@ -185,8 +188,8 @@ public class DateRangeIT extends ESIntegTestCase {
         bucket = buckets.get(1);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("2012-02-15T00:00:00.000Z-2012-03-15T00:00:00.000Z"));
-        assertThat(((DateTime) bucket.getFrom()), equalTo(date(2, 15)));
-        assertThat(((DateTime) bucket.getTo()), equalTo(date(3, 15)));
+        assertThat(((ZonedDateTime) bucket.getFrom()), equalTo(date(2, 15)));
+        assertThat(((ZonedDateTime) bucket.getTo()), equalTo(date(3, 15)));
         assertThat(bucket.getFromAsString(), equalTo("2012-02-15T00:00:00.000Z"));
         assertThat(bucket.getToAsString(), equalTo("2012-03-15T00:00:00.000Z"));
         assertThat(bucket.getDocCount(), equalTo(2L));
@@ -194,8 +197,8 @@ public class DateRangeIT extends ESIntegTestCase {
         bucket = buckets.get(2);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("2012-03-15T00:00:00.000Z-*"));
-        assertThat(((DateTime) bucket.getFrom()), equalTo(date(3, 15)));
-        assertThat(((DateTime) bucket.getTo()), nullValue());
+        assertThat(((ZonedDateTime) bucket.getFrom()), equalTo(date(3, 15)));
+        assertThat(((ZonedDateTime) bucket.getTo()), nullValue());
         assertThat(bucket.getFromAsString(), equalTo("2012-03-15T00:00:00.000Z"));
         assertThat(bucket.getToAsString(), nullValue());
         assertThat(bucket.getDocCount(), equalTo(numDocs - 4L));
@@ -222,8 +225,8 @@ public class DateRangeIT extends ESIntegTestCase {
         Range.Bucket bucket = buckets.get(0);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("*-2012-02-15T00:00:00.000Z"));
-        assertThat(((DateTime) bucket.getFrom()), nullValue());
-        assertThat(((DateTime) bucket.getTo()), equalTo(date(2, 15)));
+        assertThat(((ZonedDateTime) bucket.getFrom()), nullValue());
+        assertThat(((ZonedDateTime) bucket.getTo()), equalTo(date(2, 15)));
         assertThat(bucket.getFromAsString(), nullValue());
         assertThat(bucket.getToAsString(), equalTo("2012-02-15T00:00:00.000Z"));
         assertThat(bucket.getDocCount(), equalTo(2L));
@@ -231,8 +234,8 @@ public class DateRangeIT extends ESIntegTestCase {
         bucket = buckets.get(1);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("2012-02-15T00:00:00.000Z-2012-03-15T00:00:00.000Z"));
-        assertThat(((DateTime) bucket.getFrom()), equalTo(date(2, 15)));
-        assertThat(((DateTime) bucket.getTo()), equalTo(date(3, 15)));
+        assertThat(((ZonedDateTime) bucket.getFrom()), equalTo(date(2, 15)));
+        assertThat(((ZonedDateTime) bucket.getTo()), equalTo(date(3, 15)));
         assertThat(bucket.getFromAsString(), equalTo("2012-02-15T00:00:00.000Z"));
         assertThat(bucket.getToAsString(), equalTo("2012-03-15T00:00:00.000Z"));
         assertThat(bucket.getDocCount(), equalTo(2L));
@@ -240,8 +243,8 @@ public class DateRangeIT extends ESIntegTestCase {
         bucket = buckets.get(2);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("2012-03-15T00:00:00.000Z-*"));
-        assertThat(((DateTime) bucket.getFrom()), equalTo(date(3, 15)));
-        assertThat(((DateTime) bucket.getTo()), nullValue());
+        assertThat(((ZonedDateTime) bucket.getFrom()), equalTo(date(3, 15)));
+        assertThat(((ZonedDateTime) bucket.getTo()), nullValue());
         assertThat(bucket.getFromAsString(), equalTo("2012-03-15T00:00:00.000Z"));
         assertThat(bucket.getToAsString(), nullValue());
         assertThat(bucket.getDocCount(), equalTo(numDocs - 4L));
@@ -269,8 +272,8 @@ public class DateRangeIT extends ESIntegTestCase {
         Range.Bucket bucket = buckets.get(0);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("*-2012-02-15"));
-        assertThat(((DateTime) bucket.getFrom()), nullValue());
-        assertThat(((DateTime) bucket.getTo()), equalTo(date(2, 15)));
+        assertThat(((ZonedDateTime) bucket.getFrom()), nullValue());
+        assertThat(((ZonedDateTime) bucket.getTo()), equalTo(date(2, 15)));
         assertThat(bucket.getFromAsString(), nullValue());
         assertThat(bucket.getToAsString(), equalTo("2012-02-15"));
         assertThat(bucket.getDocCount(), equalTo(2L));
@@ -278,8 +281,8 @@ public class DateRangeIT extends ESIntegTestCase {
         bucket = buckets.get(1);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("2012-02-15-2012-03-15"));
-        assertThat(((DateTime) bucket.getFrom()), equalTo(date(2, 15)));
-        assertThat(((DateTime) bucket.getTo()), equalTo(date(3, 15)));
+        assertThat(((ZonedDateTime) bucket.getFrom()), equalTo(date(2, 15)));
+        assertThat(((ZonedDateTime) bucket.getTo()), equalTo(date(3, 15)));
         assertThat(bucket.getFromAsString(), equalTo("2012-02-15"));
         assertThat(bucket.getToAsString(), equalTo("2012-03-15"));
         assertThat(bucket.getDocCount(), equalTo(2L));
@@ -287,19 +290,17 @@ public class DateRangeIT extends ESIntegTestCase {
         bucket = buckets.get(2);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("2012-03-15-*"));
-        assertThat(((DateTime) bucket.getFrom()), equalTo(date(3, 15)));
-        assertThat(((DateTime) bucket.getTo()), nullValue());
+        assertThat(((ZonedDateTime) bucket.getFrom()), equalTo(date(3, 15)));
+        assertThat(((ZonedDateTime) bucket.getTo()), nullValue());
         assertThat(bucket.getFromAsString(), equalTo("2012-03-15"));
         assertThat(bucket.getToAsString(), nullValue());
         assertThat(bucket.getDocCount(), equalTo(numDocs - 4L));
     }
 
     public void testSingleValueFieldWithDateMath() throws Exception {
-        DateTimeZone timezone = randomDateTimeZone();
-        int timeZoneOffset = timezone.getOffset(date(2, 15));
-        // if time zone is UTC (or equivalent), time zone suffix is "Z", else something like "+03:00", which we get with the "ZZ" format
-        String feb15Suffix = timeZoneOffset == 0 ? "Z" : date(2,15, timezone).toString("ZZ");
-        String mar15Suffix = timeZoneOffset == 0 ? "Z" : date(3,15, timezone).toString("ZZ");
+        ZoneId timezone = randomZone();
+        int timeZoneOffset = timezone.getRules().getOffset(date(2, 15).toInstant()).getTotalSeconds();
+        String suffix = timeZoneOffset == 0 ? "Z" : timezone.getDisplayName(TextStyle.FULL, Locale.ROOT);
         long expectedFirstBucketCount = timeZoneOffset < 0 ? 3L : 2L;
 
         SearchResponse response = client().prepareSearch("idx")
@@ -321,29 +322,29 @@ public class DateRangeIT extends ESIntegTestCase {
 
         Range.Bucket bucket = buckets.get(0);
         assertThat(bucket, notNullValue());
-        assertThat((String) bucket.getKey(), equalTo("*-2012-02-15T00:00:00.000" + feb15Suffix));
-        assertThat(((DateTime) bucket.getFrom()), nullValue());
-        assertThat(((DateTime) bucket.getTo()), equalTo(date(2, 15, timezone).toDateTime(DateTimeZone.UTC)));
+        assertThat((String) bucket.getKey(), equalTo("*-2012-02-15T00:00:00.000" + suffix));
+        assertThat(((ZonedDateTime) bucket.getFrom()), nullValue());
+        assertThat(((ZonedDateTime) bucket.getTo()), equalTo(date(2, 15, ZoneOffset.UTC)));
         assertThat(bucket.getFromAsString(), nullValue());
-        assertThat(bucket.getToAsString(), equalTo("2012-02-15T00:00:00.000" + feb15Suffix));
+        assertThat(bucket.getToAsString(), equalTo("2012-02-15T00:00:00.000" + suffix));
         assertThat(bucket.getDocCount(), equalTo(expectedFirstBucketCount));
 
         bucket = buckets.get(1);
         assertThat(bucket, notNullValue());
-        assertThat((String) bucket.getKey(), equalTo("2012-02-15T00:00:00.000" + feb15Suffix +
-                "-2012-03-15T00:00:00.000" + mar15Suffix));
-        assertThat(((DateTime) bucket.getFrom()), equalTo(date(2, 15, timezone).toDateTime(DateTimeZone.UTC)));
-        assertThat(((DateTime) bucket.getTo()), equalTo(date(3, 15, timezone).toDateTime(DateTimeZone.UTC)));
-        assertThat(bucket.getFromAsString(), equalTo("2012-02-15T00:00:00.000" + feb15Suffix));
-        assertThat(bucket.getToAsString(), equalTo("2012-03-15T00:00:00.000" + mar15Suffix));
+        assertThat((String) bucket.getKey(), equalTo("2012-02-15T00:00:00.000" + suffix +
+                "-2012-03-15T00:00:00.000" + suffix));
+        assertThat(((ZonedDateTime) bucket.getFrom()), equalTo(date(2, 15, ZoneOffset.UTC)));
+        assertThat(((ZonedDateTime) bucket.getTo()), equalTo(date(3, 15, ZoneOffset.UTC)));
+        assertThat(bucket.getFromAsString(), equalTo("2012-02-15T00:00:00.000" + suffix));
+        assertThat(bucket.getToAsString(), equalTo("2012-03-15T00:00:00.000" + suffix));
         assertThat(bucket.getDocCount(), equalTo(2L));
 
         bucket = buckets.get(2);
         assertThat(bucket, notNullValue());
-        assertThat((String) bucket.getKey(), equalTo("2012-03-15T00:00:00.000" + mar15Suffix + "-*"));
-        assertThat(((DateTime) bucket.getFrom()), equalTo(date(3, 15, timezone).toDateTime(DateTimeZone.UTC)));
-        assertThat(((DateTime) bucket.getTo()), nullValue());
-        assertThat(bucket.getFromAsString(), equalTo("2012-03-15T00:00:00.000" + mar15Suffix));
+        assertThat((String) bucket.getKey(), equalTo("2012-03-15T00:00:00.000" + suffix + "-*"));
+        assertThat(((ZonedDateTime) bucket.getFrom()), equalTo(date(3, 15, ZoneOffset.UTC)));
+        assertThat(((ZonedDateTime) bucket.getTo()), nullValue());
+        assertThat(bucket.getFromAsString(), equalTo("2012-03-15T00:00:00.000" + suffix));
         assertThat(bucket.getToAsString(), nullValue());
         assertThat(bucket.getDocCount(), equalTo(numDocs - 2L - expectedFirstBucketCount));
     }
@@ -369,8 +370,8 @@ public class DateRangeIT extends ESIntegTestCase {
         Range.Bucket bucket = buckets.get(0);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("r1"));
-        assertThat(((DateTime) bucket.getFrom()), nullValue());
-        assertThat(((DateTime) bucket.getTo()), equalTo(date(2, 15)));
+        assertThat(((ZonedDateTime) bucket.getFrom()), nullValue());
+        assertThat(((ZonedDateTime) bucket.getTo()), equalTo(date(2, 15)));
         assertThat(bucket.getFromAsString(), nullValue());
         assertThat(bucket.getToAsString(), equalTo("2012-02-15T00:00:00.000Z"));
         assertThat(bucket.getDocCount(), equalTo(2L));
@@ -378,8 +379,8 @@ public class DateRangeIT extends ESIntegTestCase {
         bucket = buckets.get(1);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("r2"));
-        assertThat(((DateTime) bucket.getFrom()), equalTo(date(2, 15)));
-        assertThat(((DateTime) bucket.getTo()), equalTo(date(3, 15)));
+        assertThat(((ZonedDateTime) bucket.getFrom()), equalTo(date(2, 15)));
+        assertThat(((ZonedDateTime) bucket.getTo()), equalTo(date(3, 15)));
         assertThat(bucket.getFromAsString(), equalTo("2012-02-15T00:00:00.000Z"));
         assertThat(bucket.getToAsString(), equalTo("2012-03-15T00:00:00.000Z"));
         assertThat(bucket.getDocCount(), equalTo(2L));
@@ -387,8 +388,8 @@ public class DateRangeIT extends ESIntegTestCase {
         bucket = buckets.get(2);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("r3"));
-        assertThat(((DateTime) bucket.getFrom()), equalTo(date(3, 15)));
-        assertThat(((DateTime) bucket.getTo()), nullValue());
+        assertThat(((ZonedDateTime) bucket.getFrom()), equalTo(date(3, 15)));
+        assertThat(((ZonedDateTime) bucket.getTo()), nullValue());
         assertThat(bucket.getFromAsString(), equalTo("2012-03-15T00:00:00.000Z"));
         assertThat(bucket.getToAsString(), nullValue());
         assertThat(bucket.getDocCount(), equalTo(numDocs - 4L));
@@ -429,8 +430,8 @@ public class DateRangeIT extends ESIntegTestCase {
         Range.Bucket bucket = buckets.get(0);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("r1"));
-        assertThat(((DateTime) bucket.getFrom()), nullValue());
-        assertThat(((DateTime) bucket.getTo()), equalTo(date(2, 15)));
+        assertThat(((ZonedDateTime) bucket.getFrom()), nullValue());
+        assertThat(((ZonedDateTime) bucket.getTo()), equalTo(date(2, 15)));
         assertThat(bucket.getFromAsString(), nullValue());
         assertThat(bucket.getToAsString(), equalTo("2012-02-15T00:00:00.000Z"));
         assertThat(bucket.getDocCount(), equalTo(2L));
@@ -444,8 +445,8 @@ public class DateRangeIT extends ESIntegTestCase {
         bucket = buckets.get(1);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("r2"));
-        assertThat(((DateTime) bucket.getFrom()), equalTo(date(2, 15)));
-        assertThat(((DateTime) bucket.getTo()), equalTo(date(3, 15)));
+        assertThat(((ZonedDateTime) bucket.getFrom()), equalTo(date(2, 15)));
+        assertThat(((ZonedDateTime) bucket.getTo()), equalTo(date(3, 15)));
         assertThat(bucket.getFromAsString(), equalTo("2012-02-15T00:00:00.000Z"));
         assertThat(bucket.getToAsString(), equalTo("2012-03-15T00:00:00.000Z"));
         assertThat(bucket.getDocCount(), equalTo(2L));
@@ -459,8 +460,8 @@ public class DateRangeIT extends ESIntegTestCase {
         bucket = buckets.get(2);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("r3"));
-        assertThat(((DateTime) bucket.getFrom()), equalTo(date(3, 15)));
-        assertThat(((DateTime) bucket.getTo()), nullValue());
+        assertThat(((ZonedDateTime) bucket.getFrom()), equalTo(date(3, 15)));
+        assertThat(((ZonedDateTime) bucket.getTo()), nullValue());
         assertThat(bucket.getFromAsString(), equalTo("2012-03-15T00:00:00.000Z"));
         assertThat(bucket.getToAsString(), nullValue());
         assertThat(bucket.getDocCount(), equalTo(numDocs - 4L));
@@ -502,8 +503,8 @@ public class DateRangeIT extends ESIntegTestCase {
         Range.Bucket bucket = buckets.get(0);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("*-2012-02-15T00:00:00.000Z"));
-        assertThat(((DateTime) bucket.getFrom()), nullValue());
-        assertThat(((DateTime) bucket.getTo()), equalTo(date(2, 15)));
+        assertThat(((ZonedDateTime) bucket.getFrom()), nullValue());
+        assertThat(((ZonedDateTime) bucket.getTo()), equalTo(date(2, 15)));
         assertThat(bucket.getFromAsString(), nullValue());
         assertThat(bucket.getToAsString(), equalTo("2012-02-15T00:00:00.000Z"));
         assertThat(bucket.getDocCount(), equalTo(2L));
@@ -511,8 +512,8 @@ public class DateRangeIT extends ESIntegTestCase {
         bucket = buckets.get(1);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("2012-02-15T00:00:00.000Z-2012-03-15T00:00:00.000Z"));
-        assertThat(((DateTime) bucket.getFrom()), equalTo(date(2, 15)));
-        assertThat(((DateTime) bucket.getTo()), equalTo(date(3, 15)));
+        assertThat(((ZonedDateTime) bucket.getFrom()), equalTo(date(2, 15)));
+        assertThat(((ZonedDateTime) bucket.getTo()), equalTo(date(3, 15)));
         assertThat(bucket.getFromAsString(), equalTo("2012-02-15T00:00:00.000Z"));
         assertThat(bucket.getToAsString(), equalTo("2012-03-15T00:00:00.000Z"));
         assertThat(bucket.getDocCount(), equalTo(3L));
@@ -520,8 +521,8 @@ public class DateRangeIT extends ESIntegTestCase {
         bucket = buckets.get(2);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("2012-03-15T00:00:00.000Z-*"));
-        assertThat(((DateTime) bucket.getFrom()), equalTo(date(3, 15)));
-        assertThat(((DateTime) bucket.getTo()), nullValue());
+        assertThat(((ZonedDateTime) bucket.getFrom()), equalTo(date(3, 15)));
+        assertThat(((ZonedDateTime) bucket.getTo()), nullValue());
         assertThat(bucket.getFromAsString(), equalTo("2012-03-15T00:00:00.000Z"));
         assertThat(bucket.getToAsString(), nullValue());
         assertThat(bucket.getDocCount(), equalTo(numDocs - 2L));
@@ -558,8 +559,8 @@ public class DateRangeIT extends ESIntegTestCase {
         Range.Bucket bucket = buckets.get(0);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("*-2012-02-15T00:00:00.000Z"));
-        assertThat(((DateTime) bucket.getFrom()), nullValue());
-        assertThat(((DateTime) bucket.getTo()), equalTo(date(2, 15)));
+        assertThat(((ZonedDateTime) bucket.getFrom()), nullValue());
+        assertThat(((ZonedDateTime) bucket.getTo()), equalTo(date(2, 15)));
         assertThat(bucket.getFromAsString(), nullValue());
         assertThat(bucket.getToAsString(), equalTo("2012-02-15T00:00:00.000Z"));
         assertThat(bucket.getDocCount(), equalTo(1L));
@@ -567,8 +568,8 @@ public class DateRangeIT extends ESIntegTestCase {
         bucket = buckets.get(1);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("2012-02-15T00:00:00.000Z-2012-03-15T00:00:00.000Z"));
-        assertThat(((DateTime) bucket.getFrom()), equalTo(date(2, 15)));
-        assertThat(((DateTime) bucket.getTo()), equalTo(date(3, 15)));
+        assertThat(((ZonedDateTime) bucket.getFrom()), equalTo(date(2, 15)));
+        assertThat(((ZonedDateTime) bucket.getTo()), equalTo(date(3, 15)));
         assertThat(bucket.getFromAsString(), equalTo("2012-02-15T00:00:00.000Z"));
         assertThat(bucket.getToAsString(), equalTo("2012-03-15T00:00:00.000Z"));
         assertThat(bucket.getDocCount(), equalTo(2L));
@@ -576,8 +577,8 @@ public class DateRangeIT extends ESIntegTestCase {
         bucket = buckets.get(2);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("2012-03-15T00:00:00.000Z-*"));
-        assertThat(((DateTime) bucket.getFrom()), equalTo(date(3, 15)));
-        assertThat(((DateTime) bucket.getTo()), nullValue());
+        assertThat(((ZonedDateTime) bucket.getFrom()), equalTo(date(3, 15)));
+        assertThat(((ZonedDateTime) bucket.getTo()), nullValue());
         assertThat(bucket.getFromAsString(), equalTo("2012-03-15T00:00:00.000Z"));
         assertThat(bucket.getToAsString(), nullValue());
         assertThat(bucket.getDocCount(), equalTo(numDocs - 1L));
@@ -617,8 +618,8 @@ public class DateRangeIT extends ESIntegTestCase {
         Range.Bucket bucket = buckets.get(0);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("*-2012-02-15T00:00:00.000Z"));
-        assertThat(((DateTime) bucket.getFrom()), nullValue());
-        assertThat(((DateTime) bucket.getTo()), equalTo(date(2, 15)));
+        assertThat(((ZonedDateTime) bucket.getFrom()), nullValue());
+        assertThat(((ZonedDateTime) bucket.getTo()), equalTo(date(2, 15)));
         assertThat(bucket.getFromAsString(), nullValue());
         assertThat(bucket.getToAsString(), equalTo("2012-02-15T00:00:00.000Z"));
         assertThat(bucket.getDocCount(), equalTo(2L));
@@ -626,8 +627,8 @@ public class DateRangeIT extends ESIntegTestCase {
         bucket = buckets.get(1);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("2012-02-15T00:00:00.000Z-2012-03-15T00:00:00.000Z"));
-        assertThat(((DateTime) bucket.getFrom()), equalTo(date(2, 15)));
-        assertThat(((DateTime) bucket.getTo()), equalTo(date(3, 15)));
+        assertThat(((ZonedDateTime) bucket.getFrom()), equalTo(date(2, 15)));
+        assertThat(((ZonedDateTime) bucket.getTo()), equalTo(date(3, 15)));
         assertThat(bucket.getFromAsString(), equalTo("2012-02-15T00:00:00.000Z"));
         assertThat(bucket.getToAsString(), equalTo("2012-03-15T00:00:00.000Z"));
         assertThat(bucket.getDocCount(), equalTo(2L));
@@ -635,8 +636,8 @@ public class DateRangeIT extends ESIntegTestCase {
         bucket = buckets.get(2);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("2012-03-15T00:00:00.000Z-*"));
-        assertThat(((DateTime) bucket.getFrom()), equalTo(date(3, 15)));
-        assertThat(((DateTime) bucket.getTo()), nullValue());
+        assertThat(((ZonedDateTime) bucket.getFrom()), equalTo(date(3, 15)));
+        assertThat(((ZonedDateTime) bucket.getTo()), nullValue());
         assertThat(bucket.getFromAsString(), equalTo("2012-03-15T00:00:00.000Z"));
         assertThat(bucket.getToAsString(), nullValue());
         assertThat(bucket.getDocCount(), equalTo(numDocs - 4L));
@@ -676,8 +677,8 @@ public class DateRangeIT extends ESIntegTestCase {
         Range.Bucket bucket = buckets.get(0);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("*-2012-02-15T00:00:00.000Z"));
-        assertThat(((DateTime) bucket.getFrom()), nullValue());
-        assertThat(((DateTime) bucket.getTo()), equalTo(date(2, 15)));
+        assertThat(((ZonedDateTime) bucket.getFrom()), nullValue());
+        assertThat(((ZonedDateTime) bucket.getTo()), equalTo(date(2, 15)));
         assertThat(bucket.getFromAsString(), nullValue());
         assertThat(bucket.getToAsString(), equalTo("2012-02-15T00:00:00.000Z"));
         assertThat(bucket.getDocCount(), equalTo(2L));
@@ -685,8 +686,8 @@ public class DateRangeIT extends ESIntegTestCase {
         bucket = buckets.get(1);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("2012-02-15T00:00:00.000Z-2012-03-15T00:00:00.000Z"));
-        assertThat(((DateTime) bucket.getFrom()), equalTo(date(2, 15)));
-        assertThat(((DateTime) bucket.getTo()), equalTo(date(3, 15)));
+        assertThat(((ZonedDateTime) bucket.getFrom()), equalTo(date(2, 15)));
+        assertThat(((ZonedDateTime) bucket.getTo()), equalTo(date(3, 15)));
         assertThat(bucket.getFromAsString(), equalTo("2012-02-15T00:00:00.000Z"));
         assertThat(bucket.getToAsString(), equalTo("2012-03-15T00:00:00.000Z"));
         assertThat(bucket.getDocCount(), equalTo(3L));
@@ -694,8 +695,8 @@ public class DateRangeIT extends ESIntegTestCase {
         bucket = buckets.get(2);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("2012-03-15T00:00:00.000Z-*"));
-        assertThat(((DateTime) bucket.getFrom()), equalTo(date(3, 15)));
-        assertThat(((DateTime) bucket.getTo()), nullValue());
+        assertThat(((ZonedDateTime) bucket.getFrom()), equalTo(date(3, 15)));
+        assertThat(((ZonedDateTime) bucket.getTo()), nullValue());
         assertThat(bucket.getFromAsString(), equalTo("2012-03-15T00:00:00.000Z"));
         assertThat(bucket.getToAsString(), nullValue());
         assertThat(bucket.getDocCount(), equalTo(numDocs - 2L));
@@ -724,8 +725,8 @@ public class DateRangeIT extends ESIntegTestCase {
         Range.Bucket bucket = buckets.get(0);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("*-2012-02-15T00:00:00.000Z"));
-        assertThat(((DateTime) bucket.getFrom()), nullValue());
-        assertThat(((DateTime) bucket.getTo()), equalTo(date(2, 15)));
+        assertThat(((ZonedDateTime) bucket.getFrom()), nullValue());
+        assertThat(((ZonedDateTime) bucket.getTo()), equalTo(date(2, 15)));
         assertThat(bucket.getFromAsString(), nullValue());
         assertThat(bucket.getToAsString(), equalTo("2012-02-15T00:00:00.000Z"));
         assertThat(bucket.getDocCount(), equalTo(0L));
@@ -733,8 +734,8 @@ public class DateRangeIT extends ESIntegTestCase {
         bucket = buckets.get(1);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("2012-02-15T00:00:00.000Z-2012-03-15T00:00:00.000Z"));
-        assertThat(((DateTime) bucket.getFrom()), equalTo(date(2, 15)));
-        assertThat(((DateTime) bucket.getTo()), equalTo(date(3, 15)));
+        assertThat(((ZonedDateTime) bucket.getFrom()), equalTo(date(2, 15)));
+        assertThat(((ZonedDateTime) bucket.getTo()), equalTo(date(3, 15)));
         assertThat(bucket.getFromAsString(), equalTo("2012-02-15T00:00:00.000Z"));
         assertThat(bucket.getToAsString(), equalTo("2012-03-15T00:00:00.000Z"));
         assertThat(bucket.getDocCount(), equalTo(0L));
@@ -742,8 +743,8 @@ public class DateRangeIT extends ESIntegTestCase {
         bucket = buckets.get(2);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("2012-03-15T00:00:00.000Z-*"));
-        assertThat(((DateTime) bucket.getFrom()), equalTo(date(3, 15)));
-        assertThat(((DateTime) bucket.getTo()), nullValue());
+        assertThat(((ZonedDateTime) bucket.getFrom()), equalTo(date(3, 15)));
+        assertThat(((ZonedDateTime) bucket.getTo()), nullValue());
         assertThat(bucket.getFromAsString(), equalTo("2012-03-15T00:00:00.000Z"));
         assertThat(bucket.getToAsString(), nullValue());
         assertThat(bucket.getDocCount(), equalTo(0L));
@@ -770,8 +771,8 @@ public class DateRangeIT extends ESIntegTestCase {
         Range.Bucket bucket = buckets.get(0);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("*-2012-02-15T00:00:00.000Z"));
-        assertThat(((DateTime) bucket.getFrom()), nullValue());
-        assertThat(((DateTime) bucket.getTo()), equalTo(date(2, 15)));
+        assertThat(((ZonedDateTime) bucket.getFrom()), nullValue());
+        assertThat(((ZonedDateTime) bucket.getTo()), equalTo(date(2, 15)));
         assertThat(bucket.getFromAsString(), nullValue());
         assertThat(bucket.getToAsString(), equalTo("2012-02-15T00:00:00.000Z"));
         assertThat(bucket.getDocCount(), equalTo(0L));
@@ -779,8 +780,8 @@ public class DateRangeIT extends ESIntegTestCase {
         bucket = buckets.get(1);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("2012-02-15T00:00:00.000Z-2012-03-15T00:00:00.000Z"));
-        assertThat(((DateTime) bucket.getFrom()), equalTo(date(2, 15)));
-        assertThat(((DateTime) bucket.getTo()), equalTo(date(3, 15)));
+        assertThat(((ZonedDateTime) bucket.getFrom()), equalTo(date(2, 15)));
+        assertThat(((ZonedDateTime) bucket.getTo()), equalTo(date(3, 15)));
         assertThat(bucket.getFromAsString(), equalTo("2012-02-15T00:00:00.000Z"));
         assertThat(bucket.getToAsString(), equalTo("2012-03-15T00:00:00.000Z"));
         assertThat(bucket.getDocCount(), equalTo(0L));
@@ -788,8 +789,8 @@ public class DateRangeIT extends ESIntegTestCase {
         bucket = buckets.get(2);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("2012-03-15T00:00:00.000Z-*"));
-        assertThat(((DateTime) bucket.getFrom()), equalTo(date(3, 15)));
-        assertThat(((DateTime) bucket.getTo()), nullValue());
+        assertThat(((ZonedDateTime) bucket.getFrom()), equalTo(date(3, 15)));
+        assertThat(((ZonedDateTime) bucket.getTo()), nullValue());
         assertThat(bucket.getFromAsString(), equalTo("2012-03-15T00:00:00.000Z"));
         assertThat(bucket.getToAsString(), nullValue());
         assertThat(bucket.getDocCount(), equalTo(0L));
@@ -816,8 +817,8 @@ public class DateRangeIT extends ESIntegTestCase {
         Range.Bucket bucket = buckets.get(0);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("*-2012-02-15T00:00:00.000Z"));
-        assertThat(((DateTime) bucket.getFrom()), nullValue());
-        assertThat(((DateTime) bucket.getTo()), equalTo(date(2, 15)));
+        assertThat(((ZonedDateTime) bucket.getFrom()), nullValue());
+        assertThat(((ZonedDateTime) bucket.getTo()), equalTo(date(2, 15)));
         assertThat(bucket.getFromAsString(), nullValue());
         assertThat(bucket.getToAsString(), equalTo("2012-02-15T00:00:00.000Z"));
         assertThat(bucket.getDocCount(), equalTo(2L));
@@ -825,8 +826,8 @@ public class DateRangeIT extends ESIntegTestCase {
         bucket = buckets.get(1);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("2012-02-15T00:00:00.000Z-2012-03-15T00:00:00.000Z"));
-        assertThat(((DateTime) bucket.getFrom()), equalTo(date(2, 15)));
-        assertThat(((DateTime) bucket.getTo()), equalTo(date(3, 15)));
+        assertThat(((ZonedDateTime) bucket.getFrom()), equalTo(date(2, 15)));
+        assertThat(((ZonedDateTime) bucket.getTo()), equalTo(date(3, 15)));
         assertThat(bucket.getFromAsString(), equalTo("2012-02-15T00:00:00.000Z"));
         assertThat(bucket.getToAsString(), equalTo("2012-03-15T00:00:00.000Z"));
         assertThat(bucket.getDocCount(), equalTo(2L));
@@ -834,8 +835,8 @@ public class DateRangeIT extends ESIntegTestCase {
         bucket = buckets.get(2);
         assertThat(bucket, notNullValue());
         assertThat((String) bucket.getKey(), equalTo("2012-03-15T00:00:00.000Z-*"));
-        assertThat(((DateTime) bucket.getFrom()), equalTo(date(3, 15)));
-        assertThat(((DateTime) bucket.getTo()), nullValue());
+        assertThat(((ZonedDateTime) bucket.getFrom()), equalTo(date(3, 15)));
+        assertThat(((ZonedDateTime) bucket.getTo()), nullValue());
         assertThat(bucket.getFromAsString(), equalTo("2012-03-15T00:00:00.000Z"));
         assertThat(bucket.getToAsString(), nullValue());
         assertThat(bucket.getDocCount(), equalTo(numDocs - 4L));
@@ -860,8 +861,8 @@ public class DateRangeIT extends ESIntegTestCase {
         assertThat(dateRange.getName(), equalTo("date_range"));
         assertThat(buckets.size(), is(1));
         assertThat((String) buckets.get(0).getKey(), equalTo("0-1"));
-        assertThat(((DateTime) buckets.get(0).getFrom()).getMillis(), equalTo(0L));
-        assertThat(((DateTime) buckets.get(0).getTo()).getMillis(), equalTo(1L));
+        assertThat(((ZonedDateTime) buckets.get(0).getFrom()).toInstant().toEpochMilli(), equalTo(0L));
+        assertThat(((ZonedDateTime) buckets.get(0).getTo()).toInstant().toEpochMilli(), equalTo(1L));
         assertThat(buckets.get(0).getDocCount(), equalTo(0L));
         assertThat(buckets.get(0).getAggregations().asList().isEmpty(), is(true));
     }
@@ -904,7 +905,8 @@ public class DateRangeIT extends ESIntegTestCase {
         params.put("fieldname", "date");
         SearchResponse r = client().prepareSearch("cache_test_idx").setSize(0).addAggregation(dateRange("foo").field("date")
                 .script(new Script(ScriptType.INLINE, "mockscript", DateScriptMocksPlugin.DOUBLE_PLUS_ONE_MONTH, params))
-                .addRange(new DateTime(2012, 1, 1, 0, 0, 0, 0, DateTimeZone.UTC), new DateTime(2013, 1, 1, 0, 0, 0, 0, DateTimeZone.UTC)))
+                .addRange(ZonedDateTime.of(2012, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC),
+                    ZonedDateTime.of(2013, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC)))
                 .get();
         assertSearchResponse(r);
 
@@ -916,7 +918,8 @@ public class DateRangeIT extends ESIntegTestCase {
         // To make sure that the cache is working test that a request not using
         // a script is cached
         r = client().prepareSearch("cache_test_idx").setSize(0).addAggregation(dateRange("foo").field("date")
-                .addRange(new DateTime(2012, 1, 1, 0, 0, 0, 0, DateTimeZone.UTC), new DateTime(2013, 1, 1, 0, 0, 0, 0, DateTimeZone.UTC)))
+                .addRange(ZonedDateTime.of(2012, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC),
+                    ZonedDateTime.of(2013, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC)))
                 .get();
         assertSearchResponse(r);
 
@@ -1062,8 +1065,8 @@ public class DateRangeIT extends ESIntegTestCase {
     private static void assertBucket(Bucket bucket, long bucketSize, String expectedKey, long expectedFrom, long expectedTo) {
         assertThat(bucket.getDocCount(), equalTo(bucketSize));
         assertThat((String) bucket.getKey(), equalTo(expectedKey));
-        assertThat(((DateTime) bucket.getFrom()).getMillis(), equalTo(expectedFrom));
-        assertThat(((DateTime) bucket.getTo()).getMillis(), equalTo(expectedTo));
+        assertThat(((ZonedDateTime) bucket.getFrom()).toInstant().toEpochMilli(), equalTo(expectedFrom));
+        assertThat(((ZonedDateTime) bucket.getTo()).toInstant().toEpochMilli(), equalTo(expectedTo));
         assertThat(bucket.getAggregations().asList().isEmpty(), is(true));
     }
 }

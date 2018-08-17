@@ -21,6 +21,7 @@ package org.elasticsearch.search.aggregations.pipeline;
 
 import org.elasticsearch.action.index.IndexRequestBuilder;
 import org.elasticsearch.action.search.SearchResponse;
+import org.elasticsearch.common.time.CompoundDateTimeFormatter;
 import org.elasticsearch.common.time.DateFormatters;
 import org.elasticsearch.index.mapper.DateFieldMapper;
 import org.elasticsearch.search.aggregations.InternalAggregation;
@@ -36,6 +37,8 @@ import org.hamcrest.Matcher;
 import org.junit.After;
 
 import java.io.IOException;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -61,18 +64,18 @@ public class DateDerivativeIT extends ESIntegTestCase {
     private static final String IDX_DST_KATHMANDU = "idx_dst_kathmandu";
 
     private ZonedDateTime date(int month, int day) {
-        return new DateTime(2012, month, day, 0, 0, DateTimeZone.UTC);
+        return ZonedDateTime.of(2012, month, day, 0, 0, 0, 0, ZoneOffset.UTC);
     }
 
     private ZonedDateTime date(String date) {
         return DateFormatters.toZonedDateTime(DateFieldMapper.DEFAULT_DATE_TIME_FORMATTER.parse(date));
     }
 
-    private static String format(DateTime date, String pattern) {
-        return DateTimeFormat.forPattern(pattern).print(date);
+    private static String format(ZonedDateTime date, String pattern) {
+        return DateFormatters.forPattern(pattern).format(date);
     }
 
-    private static IndexRequestBuilder indexDoc(String idx, DateTime date, int value) throws Exception {
+    private static IndexRequestBuilder indexDoc(String idx, ZonedDateTime date, int value) throws Exception {
         return client().prepareIndex(idx, "type").setSource(
                 jsonBuilder().startObject().timeField("date", date).field("value", value).endObject());
     }
@@ -124,27 +127,27 @@ public class DateDerivativeIT extends ESIntegTestCase {
         List<? extends Bucket> buckets = deriv.getBuckets();
         assertThat(buckets.size(), equalTo(3));
 
-        DateTime key = new DateTime(2012, 1, 1, 0, 0, DateTimeZone.UTC);
+        ZonedDateTime key = ZonedDateTime.of(2012, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         Histogram.Bucket bucket = buckets.get(0);
         assertThat(bucket, notNullValue());
-        assertThat((DateTime) bucket.getKey(), equalTo(key));
+        assertThat((ZonedDateTime) bucket.getKey(), equalTo(key));
         assertThat(bucket.getDocCount(), equalTo(1L));
         SimpleValue docCountDeriv = bucket.getAggregations().get("deriv");
         assertThat(docCountDeriv, nullValue());
 
-        key = new DateTime(2012, 2, 1, 0, 0, DateTimeZone.UTC);
+        key = ZonedDateTime.of(2012, 2, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         bucket = buckets.get(1);
         assertThat(bucket, notNullValue());
-        assertThat((DateTime) bucket.getKey(), equalTo(key));
+        assertThat((ZonedDateTime) bucket.getKey(), equalTo(key));
         assertThat(bucket.getDocCount(), equalTo(2L));
         docCountDeriv = bucket.getAggregations().get("deriv");
         assertThat(docCountDeriv, notNullValue());
         assertThat(docCountDeriv.value(), equalTo(1d));
 
-        key = new DateTime(2012, 3, 1, 0, 0, DateTimeZone.UTC);
+        key = ZonedDateTime.of(2012, 3, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         bucket = buckets.get(2);
         assertThat(bucket, notNullValue());
-        assertThat((DateTime) bucket.getKey(), equalTo(key));
+        assertThat((ZonedDateTime) bucket.getKey(), equalTo(key));
         assertThat(bucket.getDocCount(), equalTo(3L));
         docCountDeriv = bucket.getAggregations().get("deriv");
         assertThat(docCountDeriv, notNullValue());
@@ -167,28 +170,28 @@ public class DateDerivativeIT extends ESIntegTestCase {
         List<? extends Bucket> buckets = deriv.getBuckets();
         assertThat(buckets.size(), equalTo(3));
 
-        DateTime key = new DateTime(2012, 1, 1, 0, 0, DateTimeZone.UTC);
+        ZonedDateTime key = ZonedDateTime.of(2012, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         Histogram.Bucket bucket = buckets.get(0);
         assertThat(bucket, notNullValue());
-        assertThat((DateTime) bucket.getKey(), equalTo(key));
+        assertThat((ZonedDateTime) bucket.getKey(), equalTo(key));
         assertThat(bucket.getDocCount(), equalTo(1L));
         Derivative docCountDeriv = bucket.getAggregations().get("deriv");
         assertThat(docCountDeriv, nullValue());
 
-        key = new DateTime(2012, 2, 1, 0, 0, DateTimeZone.UTC);
+        key = ZonedDateTime.of(2012, 2, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         bucket = buckets.get(1);
         assertThat(bucket, notNullValue());
-        assertThat((DateTime) bucket.getKey(), equalTo(key));
+        assertThat((ZonedDateTime) bucket.getKey(), equalTo(key));
         assertThat(bucket.getDocCount(), equalTo(2L));
         docCountDeriv = bucket.getAggregations().get("deriv");
         assertThat(docCountDeriv, notNullValue());
         assertThat(docCountDeriv.value(), closeTo(1d, 0.00001));
         assertThat(docCountDeriv.normalizedValue(), closeTo(1d / 31d, 0.00001));
 
-        key = new DateTime(2012, 3, 1, 0, 0, DateTimeZone.UTC);
+        key = ZonedDateTime.of(2012, 3, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         bucket = buckets.get(2);
         assertThat(bucket, notNullValue());
-        assertThat((DateTime) bucket.getKey(), equalTo(key));
+        assertThat((ZonedDateTime) bucket.getKey(), equalTo(key));
         assertThat(bucket.getDocCount(), equalTo(3L));
         docCountDeriv = bucket.getAggregations().get("deriv");
         assertThat(docCountDeriv, notNullValue());
@@ -203,11 +206,12 @@ public class DateDerivativeIT extends ESIntegTestCase {
         createIndex(IDX_DST_START);
         List<IndexRequestBuilder> builders = new ArrayList<>();
 
-        DateTimeZone timezone = DateTimeZone.forID("CET");
-        addNTimes(1, IDX_DST_START, new DateTime("2012-03-24T01:00:00", timezone), builders);
-        addNTimes(2, IDX_DST_START, new DateTime("2012-03-25T01:00:00", timezone), builders); // day with dst shift, only 23h long
-        addNTimes(3, IDX_DST_START, new DateTime("2012-03-26T01:00:00", timezone), builders);
-        addNTimes(4, IDX_DST_START, new DateTime("2012-03-27T01:00:00", timezone), builders);
+        ZoneId timezone = ZoneId.of("CET");
+        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("yyyy-MM-ddTHH:mm:ss").withZone(timezone);
+        addNTimes(1, IDX_DST_START, DateFormatters.toZonedDateTime(formatter.parse("2012-03-24T01:00:00")), builders);
+        addNTimes(2, IDX_DST_START, DateFormatters.toZonedDateTime(formatter.parse("2012-03-25T01:00:00")), builders); // day with dst shift, only 23h long
+        addNTimes(3, IDX_DST_START, DateFormatters.toZonedDateTime(formatter.parse("2012-03-26T01:00:00")), builders);
+        addNTimes(4, IDX_DST_START, DateFormatters.toZonedDateTime(formatter.parse("2012-03-27T01:00:00")), builders);
         indexRandom(true, builders);
         ensureSearchable();
 
@@ -227,11 +231,12 @@ public class DateDerivativeIT extends ESIntegTestCase {
         List<? extends Bucket> buckets = deriv.getBuckets();
         assertThat(buckets.size(), equalTo(4));
 
-        assertBucket(buckets.get(0), new DateTime("2012-03-24", timezone).toDateTime(DateTimeZone.UTC), 1L, nullValue(), null, null);
-        assertBucket(buckets.get(1), new DateTime("2012-03-25", timezone).toDateTime(DateTimeZone.UTC), 2L, notNullValue(), 1d, 1d / 24d);
+        CompoundDateTimeFormatter dateFormatter = DateFormatters.forPattern("yyyy-MM-dd").withZone(ZoneOffset.UTC);
+        assertBucket(buckets.get(0), DateFormatters.toZonedDateTime(dateFormatter.parse("2012-03-24")), 1L, nullValue(), null, null);
+        assertBucket(buckets.get(1), DateFormatters.toZonedDateTime(dateFormatter.parse("2012-03-25")),2L, notNullValue(), 1d, 1d / 24d);
         // the following is normalized using a 23h bucket width
-        assertBucket(buckets.get(2), new DateTime("2012-03-26", timezone).toDateTime(DateTimeZone.UTC), 3L, notNullValue(), 1d, 1d / 23d);
-        assertBucket(buckets.get(3), new DateTime("2012-03-27", timezone).toDateTime(DateTimeZone.UTC), 4L, notNullValue(), 1d, 1d / 24d);
+        assertBucket(buckets.get(2), DateFormatters.toZonedDateTime(dateFormatter.parse("2012-03-26")), 3L, notNullValue(), 1d, 1d / 23d);
+        assertBucket(buckets.get(3), DateFormatters.toZonedDateTime(dateFormatter.parse("2012-03-27")), 4L, notNullValue(), 1d, 1d / 24d);
     }
 
     /**
@@ -239,13 +244,14 @@ public class DateDerivativeIT extends ESIntegTestCase {
      */
     public void testSingleValuedFieldNormalised_timeZone_CET_DstEnd() throws Exception {
         createIndex(IDX_DST_END);
-        DateTimeZone timezone = DateTimeZone.forID("CET");
+        ZoneId timezone = ZoneId.of("CET");
         List<IndexRequestBuilder> builders = new ArrayList<>();
 
-        addNTimes(1, IDX_DST_END, new DateTime("2012-10-27T01:00:00", timezone), builders);
-        addNTimes(2, IDX_DST_END, new DateTime("2012-10-28T01:00:00", timezone), builders); // day with dst shift -1h, 25h long
-        addNTimes(3, IDX_DST_END, new DateTime("2012-10-29T01:00:00", timezone), builders);
-        addNTimes(4, IDX_DST_END, new DateTime("2012-10-30T01:00:00", timezone), builders);
+        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("yyyy-MM-ddTHH:mm:ss").withZone(timezone);
+        addNTimes(1, IDX_DST_END, DateFormatters.toZonedDateTime(formatter.parse("2012-10-27T01:00:00")), builders);
+        addNTimes(2, IDX_DST_END, DateFormatters.toZonedDateTime(formatter.parse("2012-10-28T01:00:00")), builders); // day with dst shift -1h, 25h long
+        addNTimes(3, IDX_DST_END, DateFormatters.toZonedDateTime(formatter.parse("2012-10-29T01:00:00")), builders);
+        addNTimes(4, IDX_DST_END, DateFormatters.toZonedDateTime(formatter.parse("2012-10-30T01:00:00")), builders);
         indexRandom(true, builders);
         ensureSearchable();
 
@@ -265,11 +271,12 @@ public class DateDerivativeIT extends ESIntegTestCase {
         List<? extends Bucket> buckets = deriv.getBuckets();
         assertThat(buckets.size(), equalTo(4));
 
-        assertBucket(buckets.get(0), new DateTime("2012-10-27", timezone).toDateTime(DateTimeZone.UTC), 1L, nullValue(), null, null);
-        assertBucket(buckets.get(1), new DateTime("2012-10-28", timezone).toDateTime(DateTimeZone.UTC), 2L, notNullValue(), 1d, 1d / 24d);
+        CompoundDateTimeFormatter dateFormatter = DateFormatters.forPattern("yyyy-MM-dd").withZone(ZoneOffset.UTC);
+        assertBucket(buckets.get(0), DateFormatters.toZonedDateTime(dateFormatter.parse("2012-10-27")), 1L, nullValue(), null, null);
+        assertBucket(buckets.get(1), DateFormatters.toZonedDateTime(dateFormatter.parse("2012-10-28")), 2L, notNullValue(), 1d, 1d / 24d);
         // the following is normalized using a 25h bucket width
-        assertBucket(buckets.get(2), new DateTime("2012-10-29", timezone).toDateTime(DateTimeZone.UTC), 3L, notNullValue(), 1d, 1d / 25d);
-        assertBucket(buckets.get(3), new DateTime("2012-10-30", timezone).toDateTime(DateTimeZone.UTC), 4L, notNullValue(), 1d, 1d / 24d);
+        assertBucket(buckets.get(2), DateFormatters.toZonedDateTime(dateFormatter.parse("2012-10-29")), 3L, notNullValue(), 1d, 1d / 25d);
+        assertBucket(buckets.get(3), DateFormatters.toZonedDateTime(dateFormatter.parse("2012-10-30")), 4L, notNullValue(), 1d, 1d / 24d);
     }
 
     /**
@@ -278,14 +285,15 @@ public class DateDerivativeIT extends ESIntegTestCase {
      */
     public void testSingleValuedFieldNormalised_timeZone_AsiaKathmandu() throws Exception {
         createIndex(IDX_DST_KATHMANDU);
-        DateTimeZone timezone = DateTimeZone.forID("Asia/Kathmandu");
+        ZoneId timezone = ZoneId.of("Asia/Kathmandu");
         List<IndexRequestBuilder> builders = new ArrayList<>();
 
-        addNTimes(1, IDX_DST_KATHMANDU, new DateTime("1985-12-31T22:30:00", timezone), builders);
+        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("yyyy-MM-ddTHH:mm:ss").withZone(timezone);
+        addNTimes(1, IDX_DST_KATHMANDU, DateFormatters.toZonedDateTime(formatter.parse("1985-12-31T22:30:00")), builders);
         // the shift happens during the next bucket, which includes the 45min that do not start on the full hour
-        addNTimes(2, IDX_DST_KATHMANDU, new DateTime("1985-12-31T23:30:00", timezone), builders);
-        addNTimes(3, IDX_DST_KATHMANDU, new DateTime("1986-01-01T01:30:00", timezone), builders);
-        addNTimes(4, IDX_DST_KATHMANDU, new DateTime("1986-01-01T02:30:00", timezone), builders);
+        addNTimes(2, IDX_DST_KATHMANDU, DateFormatters.toZonedDateTime(formatter.parse("1985-12-31T23:30:00")), builders);
+        addNTimes(3, IDX_DST_KATHMANDU, DateFormatters.toZonedDateTime(formatter.parse("1986-01-01T01:30:00")), builders);
+        addNTimes(4, IDX_DST_KATHMANDU, DateFormatters.toZonedDateTime(formatter.parse("1986-01-01T02:30:00")), builders);
         indexRandom(true, builders);
         ensureSearchable();
 
@@ -305,27 +313,28 @@ public class DateDerivativeIT extends ESIntegTestCase {
         List<? extends Bucket> buckets = deriv.getBuckets();
         assertThat(buckets.size(), equalTo(4));
 
-        assertBucket(buckets.get(0), new DateTime("1985-12-31T22:00:00", timezone).toDateTime(DateTimeZone.UTC), 1L, nullValue(), null,
+        CompoundDateTimeFormatter dateFormatter = DateFormatters.forPattern("yyyy-MM-ddTHH:mm:ss").withZone(ZoneOffset.UTC);
+        assertBucket(buckets.get(0), DateFormatters.toZonedDateTime(dateFormatter.parse("1985-12-31T22:00:00")), 1L, nullValue(), null,
                 null);
-        assertBucket(buckets.get(1), new DateTime("1985-12-31T23:00:00", timezone).toDateTime(DateTimeZone.UTC), 2L, notNullValue(), 1d,
+        assertBucket(buckets.get(1), DateFormatters.toZonedDateTime(dateFormatter.parse("1985-12-31T23:00:00")), 2L, notNullValue(), 1d,
                 1d / 60d);
         // the following is normalized using a 105min bucket width
-        assertBucket(buckets.get(2), new DateTime("1986-01-01T01:00:00", timezone).toDateTime(DateTimeZone.UTC), 3L, notNullValue(), 1d,
+        assertBucket(buckets.get(2), DateFormatters.toZonedDateTime(dateFormatter.parse("1986-01-01T01:00:00")), 3L, notNullValue(), 1d,
                 1d / 105d);
-        assertBucket(buckets.get(3), new DateTime("1986-01-01T02:00:00", timezone).toDateTime(DateTimeZone.UTC), 4L, notNullValue(), 1d,
+        assertBucket(buckets.get(3), DateFormatters.toZonedDateTime(dateFormatter.parse("1986-01-01T02:00:00")), 4L, notNullValue(), 1d,
                 1d / 60d);
     }
 
-    private static void addNTimes(int amount, String index, DateTime dateTime, List<IndexRequestBuilder> builders) throws Exception {
+    private static void addNTimes(int amount, String index, ZonedDateTime dateTime, List<IndexRequestBuilder> builders) throws Exception {
         for (int i = 0; i < amount; i++) {
             builders.add(indexDoc(index, dateTime, 1));
         }
     }
 
-    private static void assertBucket(Histogram.Bucket bucket, DateTime expectedKey, long expectedDocCount,
+    private static void assertBucket(Histogram.Bucket bucket, ZonedDateTime expectedKey, long expectedDocCount,
             Matcher<Object> derivativeMatcher, Double derivative, Double normalizedDerivative) {
         assertThat(bucket, notNullValue());
-        assertThat((DateTime) bucket.getKey(), equalTo(expectedKey));
+        assertThat((ZonedDateTime) bucket.getKey(), equalTo(expectedKey));
         assertThat(bucket.getDocCount(), equalTo(expectedDocCount));
         Derivative docCountDeriv = bucket.getAggregations().get("deriv");
         assertThat(docCountDeriv, derivativeMatcher);
@@ -354,10 +363,10 @@ public class DateDerivativeIT extends ESIntegTestCase {
         Object[] propertiesDocCounts = (Object[]) ((InternalAggregation)histo).getProperty("_count");
         Object[] propertiesCounts = (Object[]) ((InternalAggregation)histo).getProperty("sum.value");
 
-        DateTime key = new DateTime(2012, 1, 1, 0, 0, DateTimeZone.UTC);
+        ZonedDateTime key = ZonedDateTime.of(2012, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         Histogram.Bucket bucket = buckets.get(0);
         assertThat(bucket, notNullValue());
-        assertThat((DateTime) bucket.getKey(), equalTo(key));
+        assertThat((ZonedDateTime) bucket.getKey(), equalTo(key));
         assertThat(bucket.getDocCount(), equalTo(1L));
         assertThat(bucket.getAggregations().asList().isEmpty(), is(false));
         Sum sum = bucket.getAggregations().get("sum");
@@ -365,14 +374,14 @@ public class DateDerivativeIT extends ESIntegTestCase {
         assertThat(sum.getValue(), equalTo(1.0));
         SimpleValue deriv = bucket.getAggregations().get("deriv");
         assertThat(deriv, nullValue());
-        assertThat((DateTime) propertiesKeys[0], equalTo(key));
+        assertThat((ZonedDateTime) propertiesKeys[0], equalTo(key));
         assertThat((long) propertiesDocCounts[0], equalTo(1L));
         assertThat((double) propertiesCounts[0], equalTo(1.0));
 
-        key = new DateTime(2012, 2, 1, 0, 0, DateTimeZone.UTC);
+        key = ZonedDateTime.of(2012, 2, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         bucket = buckets.get(1);
         assertThat(bucket, notNullValue());
-        assertThat((DateTime) bucket.getKey(), equalTo(key));
+        assertThat((ZonedDateTime) bucket.getKey(), equalTo(key));
         assertThat(bucket.getDocCount(), equalTo(2L));
         assertThat(bucket.getAggregations().asList().isEmpty(), is(false));
         sum = bucket.getAggregations().get("sum");
@@ -383,14 +392,14 @@ public class DateDerivativeIT extends ESIntegTestCase {
         assertThat(deriv.value(), equalTo(4.0));
         assertThat(((InternalMultiBucketAggregation.InternalBucket)bucket).getProperty(
                 "histo", AggregationPath.parse("deriv.value").getPathElementsAsStringList()), equalTo(4.0));
-        assertThat((DateTime) propertiesKeys[1], equalTo(key));
+        assertThat((ZonedDateTime) propertiesKeys[1], equalTo(key));
         assertThat((long) propertiesDocCounts[1], equalTo(2L));
         assertThat((double) propertiesCounts[1], equalTo(5.0));
 
-        key = new DateTime(2012, 3, 1, 0, 0, DateTimeZone.UTC);
+        key = ZonedDateTime.of(2012, 3, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         bucket = buckets.get(2);
         assertThat(bucket, notNullValue());
-        assertThat((DateTime) bucket.getKey(), equalTo(key));
+        assertThat((ZonedDateTime) bucket.getKey(), equalTo(key));
         assertThat(bucket.getDocCount(), equalTo(3L));
         assertThat(bucket.getAggregations().asList().isEmpty(), is(false));
         sum = bucket.getAggregations().get("sum");
@@ -401,7 +410,7 @@ public class DateDerivativeIT extends ESIntegTestCase {
         assertThat(deriv.value(), equalTo(10.0));
         assertThat(((InternalMultiBucketAggregation.InternalBucket)bucket).getProperty(
                 "histo", AggregationPath.parse("deriv.value").getPathElementsAsStringList()), equalTo(10.0));
-        assertThat((DateTime) propertiesKeys[2], equalTo(key));
+        assertThat((ZonedDateTime) propertiesKeys[2], equalTo(key));
         assertThat((long) propertiesDocCounts[2], equalTo(3L));
         assertThat((double) propertiesCounts[2], equalTo(15.0));
     }
@@ -421,39 +430,39 @@ public class DateDerivativeIT extends ESIntegTestCase {
         List<? extends Bucket> buckets = deriv.getBuckets();
         assertThat(buckets.size(), equalTo(4));
 
-        DateTime key = new DateTime(2012, 1, 1, 0, 0, DateTimeZone.UTC);
+        ZonedDateTime key = ZonedDateTime.of(2012, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         Histogram.Bucket bucket = buckets.get(0);
         assertThat(bucket, notNullValue());
-        assertThat((DateTime) bucket.getKey(), equalTo(key));
+        assertThat((ZonedDateTime) bucket.getKey(), equalTo(key));
         assertThat(bucket.getDocCount(), equalTo(1L));
         assertThat(bucket.getAggregations().asList().isEmpty(), is(true));
         SimpleValue docCountDeriv = bucket.getAggregations().get("deriv");
         assertThat(docCountDeriv, nullValue());
 
-        key = new DateTime(2012, 2, 1, 0, 0, DateTimeZone.UTC);
+        key = ZonedDateTime.of(2012, 2, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         bucket = buckets.get(1);
         assertThat(bucket, notNullValue());
-        assertThat((DateTime) bucket.getKey(), equalTo(key));
+        assertThat((ZonedDateTime) bucket.getKey(), equalTo(key));
         assertThat(bucket.getDocCount(), equalTo(3L));
         assertThat(bucket.getAggregations().asList().isEmpty(), is(false));
         docCountDeriv = bucket.getAggregations().get("deriv");
         assertThat(docCountDeriv, notNullValue());
         assertThat(docCountDeriv.value(), equalTo(2.0));
 
-        key = new DateTime(2012, 3, 1, 0, 0, DateTimeZone.UTC);
+        key = ZonedDateTime.of(2012, 3, 1, 0, 0, 0, 0,ZoneOffset.UTC);
         bucket = buckets.get(2);
         assertThat(bucket, notNullValue());
-        assertThat((DateTime) bucket.getKey(), equalTo(key));
+        assertThat((ZonedDateTime) bucket.getKey(), equalTo(key));
         assertThat(bucket.getDocCount(), equalTo(5L));
         assertThat(bucket.getAggregations().asList().isEmpty(), is(false));
         docCountDeriv = bucket.getAggregations().get("deriv");
         assertThat(docCountDeriv, notNullValue());
         assertThat(docCountDeriv.value(), equalTo(2.0));
 
-        key = new DateTime(2012, 4, 1, 0, 0, DateTimeZone.UTC);
+        key = ZonedDateTime.of(2012, 4, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         bucket = buckets.get(3);
         assertThat(bucket, notNullValue());
-        assertThat((DateTime) bucket.getKey(), equalTo(key));
+        assertThat((ZonedDateTime) bucket.getKey(), equalTo(key));
         assertThat(bucket.getDocCount(), equalTo(3L));
         assertThat(bucket.getAggregations().asList().isEmpty(), is(false));
         docCountDeriv = bucket.getAggregations().get("deriv");
@@ -491,29 +500,29 @@ public class DateDerivativeIT extends ESIntegTestCase {
         List<? extends Bucket> buckets = deriv.getBuckets();
         assertThat(buckets.size(), equalTo(3));
 
-        DateTime key = new DateTime(2012, 1, 1, 0, 0, DateTimeZone.UTC);
+        ZonedDateTime key = ZonedDateTime.of(2012, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         Histogram.Bucket bucket = buckets.get(0);
         assertThat(bucket, notNullValue());
-        assertThat((DateTime) bucket.getKey(), equalTo(key));
+        assertThat((ZonedDateTime) bucket.getKey(), equalTo(key));
         assertThat(bucket.getDocCount(), equalTo(1L));
         assertThat(bucket.getAggregations().asList().isEmpty(), is(true));
         SimpleValue docCountDeriv = bucket.getAggregations().get("deriv");
         assertThat(docCountDeriv, nullValue());
 
-        key = new DateTime(2012, 2, 1, 0, 0, DateTimeZone.UTC);
+        key = ZonedDateTime.of(2012, 2, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         bucket = buckets.get(1);
         assertThat(bucket, notNullValue());
-        assertThat((DateTime) bucket.getKey(), equalTo(key));
+        assertThat((ZonedDateTime) bucket.getKey(), equalTo(key));
         assertThat(bucket.getDocCount(), equalTo(2L));
         assertThat(bucket.getAggregations().asList().isEmpty(), is(false));
         docCountDeriv = bucket.getAggregations().get("deriv");
         assertThat(docCountDeriv, notNullValue());
         assertThat(docCountDeriv.value(), equalTo(1.0));
 
-        key = new DateTime(2012, 3, 1, 0, 0, DateTimeZone.UTC);
+        key = ZonedDateTime.of(2012, 3, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         bucket = buckets.get(2);
         assertThat(bucket, notNullValue());
-        assertThat((DateTime) bucket.getKey(), equalTo(key));
+        assertThat((ZonedDateTime) bucket.getKey(), equalTo(key));
         assertThat(bucket.getDocCount(), equalTo(3L));
         assertThat(bucket.getAggregations().asList().isEmpty(), is(false));
         docCountDeriv = bucket.getAggregations().get("deriv");
