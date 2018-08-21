@@ -79,7 +79,7 @@ public class DateFieldMapper extends FieldMapper {
     public static class Builder extends FieldMapper.Builder<Builder, DateFieldMapper> {
 
         private Boolean ignoreMalformed;
-        private String format = DEFAULT_COMPOUND_DATE_TIME_FORMATTER.getFormatter();
+        private Explicit<String> format = new Explicit<>(DEFAULT_COMPOUND_DATE_TIME_FORMATTER.getFormatter(), false);
         private Locale locale;
 
         public Builder(String name) {
@@ -118,20 +118,25 @@ public class DateFieldMapper extends FieldMapper {
         }
 
         public String format() {
-            return format;
+            return format.value();
         }
 
         public Builder format(String format) {
-            this.format = format;
+            this.format = new Explicit<>(format, true);
             return this;
+        }
+
+        public boolean isFormatterSet() {
+            return format.explicit();
         }
 
         @Override
         protected void setupFieldType(BuilderContext context) {
             super.setupFieldType(context);
+            String formatter = this.format.value();
             if (Objects.equals(locale, fieldType().dateTimeFormatter.getLocale()) == false ||
-                (Objects.equals(format, fieldType().dateTimeFormatter.getFormatter()) == false && Strings.isEmpty(format) == false)) {
-                fieldType().setDateTimeFormatter(DateFormatters.forPattern(format, locale));
+                (Objects.equals(formatter, fieldType().dateTimeFormatter.getFormatter()) == false && Strings.isEmpty(formatter) == false)) {
+                fieldType().setDateTimeFormatter(DateFormatters.forPattern(formatter, locale));
             }
         }
 

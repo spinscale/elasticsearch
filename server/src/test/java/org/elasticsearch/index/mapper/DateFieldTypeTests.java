@@ -68,7 +68,8 @@ public class DateFieldTypeTests extends FieldTypeTestCase {
         addModifier(new Modifier("locale", false) {
             @Override
             public void modify(MappedFieldType ft) {
-                ((DateFieldType) ft).setDateTimeFormatter(DateFormatters.forPattern("date_optional_time", Locale.CANADA));
+                String formatter = DateFieldMapper.DEFAULT_COMPOUND_DATE_TIME_FORMATTER.getFormatter();
+                ((DateFieldType) ft).setDateTimeFormatter(DateFormatters.forPattern(formatter, Locale.CANADA));
             }
         });
         nowInMillis = randomNonNegativeLong();

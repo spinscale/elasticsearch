@@ -1452,20 +1452,10 @@ public class DateFormatters {
             if (formats.length == 1) {
                 return forPattern(formats[0], locale);
             } else {
-<<<<<<< HEAD
                 try {
                     DateFormatter[] formatters = new DateFormatter[formats.length];
                     for (int i = 0; i < formats.length; i++) {
                         formatters[i] = forPattern(formats[i], locale);
-=======
-                Collection<DateTimeFormatter> parsers = new LinkedHashSet<>(formats.length);
-                for (String format : formats) {
-                    CompoundDateTimeFormatter dateTimeFormatter = forPattern(format, locale).withLocale(locale);
-                    try {
-                        parsers.addAll(Arrays.asList(dateTimeFormatter.parsers));
-                    } catch (IllegalArgumentException e) {
-                        throw new IllegalArgumentException("Invalid format: [" + input + "]: " + e.getMessage(), e);
->>>>>>> WIP
                     }
 
                     return DateFormatter.merge(formatters);

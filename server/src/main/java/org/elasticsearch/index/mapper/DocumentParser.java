@@ -721,7 +721,9 @@ final class DocumentParser {
                     }
                     if (builder instanceof DateFieldMapper.Builder) {
                         DateFieldMapper.Builder dateBuilder = (DateFieldMapper.Builder) builder;
-                        dateBuilder.format(dateBuilder.format()).locale(dateBuilder.locale());
+                        if (dateBuilder.isFormatterSet() == false) {
+                            dateBuilder.format(dateTimeFormatter.getFormatter()).locale(dateTimeFormatter.getLocale());
+                        }
                     }
                     return builder;
                 }

@@ -72,7 +72,6 @@ public class RangeQueryBuilder extends AbstractQueryBuilder<RangeQueryBuilder> i
     private boolean includeLower = DEFAULT_INCLUDE_LOWER;
     private boolean includeUpper = DEFAULT_INCLUDE_UPPER;
     private CompoundDateTimeFormatter formatter;
-    private String formatterString;
     private ShapeRelation relation;
 
     /**
@@ -98,7 +97,7 @@ public class RangeQueryBuilder extends AbstractQueryBuilder<RangeQueryBuilder> i
         includeLower = in.readBoolean();
         includeUpper = in.readBoolean();
         timeZone = in.readOptionalZoneId();
-        formatterString = in.readOptionalString();
+        String formatterString = in.readOptionalString();
         if (formatterString != null) {
             formatter = DateFormatters.forPattern(formatterString);
         }
@@ -127,8 +126,8 @@ public class RangeQueryBuilder extends AbstractQueryBuilder<RangeQueryBuilder> i
         out.writeBoolean(this.includeUpper);
         out.writeOptionalZoneId(timeZone);
         String formatString = null;
-        if (this.formatterString != null) {
-            formatString = this.formatterString;
+        if (this.formatter != null) {
+            formatString = this.formatter.getFormatter();
         }
         out.writeOptionalString(formatString);
         String relationString = null;
@@ -288,7 +287,6 @@ public class RangeQueryBuilder extends AbstractQueryBuilder<RangeQueryBuilder> i
         if (format == null) {
             throw new IllegalArgumentException("format cannot be null");
         }
-        this.formatterString = format;
         this.formatter = DateFormatters.forPattern(format);
         return this;
     }
@@ -297,7 +295,10 @@ public class RangeQueryBuilder extends AbstractQueryBuilder<RangeQueryBuilder> i
      * Gets the format field to parse the from/to fields
      */
     public String format() {
-        return this.formatterString;
+        if (formatter == null) {
+            return null;
+        }
+        return this.formatter.getFormatter();
     }
 
     DateMathParser getForceDateParser() { // pkg private for testing
@@ -336,8 +337,8 @@ public class RangeQueryBuilder extends AbstractQueryBuilder<RangeQueryBuilder> i
         if (timeZone != null) {
             builder.field(TIME_ZONE_FIELD.getPreferredName(), timeZone.getId());
         }
-        if (formatterString != null) {
-            builder.field(FORMAT_FIELD.getPreferredName(), formatterString);
+        if (formatter != null && formatter.getFormatter() != null) {
+            builder.field(FORMAT_FIELD.getPreferredName(), formatter.getFormatter());
         }
         if (relation != null) {
             builder.field(RELATION_FIELD.getPreferredName(), relation.getRelationName());
@@ -463,11 +464,11 @@ public class RangeQueryBuilder extends AbstractQueryBuilder<RangeQueryBuilder> i
         case DISJOINT:
             return new MatchNoneQueryBuilder();
         case WITHIN:
-            if (from != null || to != null || formatterString != null || timeZone != null) {
+            if (from != null || to != null || formatter != null || timeZone != null) {
                 RangeQueryBuilder newRangeQuery = new RangeQueryBuilder(fieldName);
                 newRangeQuery.from(null);
                 newRangeQuery.to(null);
-                newRangeQuery.formatterString = null;
+                newRangeQuery.formatter = null;
                 newRangeQuery.timeZone = null;
                 return newRangeQuery;
             } else {
@@ -522,7 +523,7 @@ public class RangeQueryBuilder extends AbstractQueryBuilder<RangeQueryBuilder> i
     @Override
     protected int doHashCode() {
         String timeZoneId = timeZone == null ? null : timeZone.getId();
-        return Objects.hash(fieldName, from, to, timeZoneId, includeLower, includeUpper, formatterString);
+        return Objects.hash(fieldName, from, to, timeZoneId, includeLower, includeUpper, formatter);
     }
 
     @Override
@@ -534,6 +535,6 @@ public class RangeQueryBuilder extends AbstractQueryBuilder<RangeQueryBuilder> i
                Objects.equals(timeZoneId, other.timeZone()) &&
                Objects.equals(includeLower, other.includeLower) &&
                Objects.equals(includeUpper, other.includeUpper) &&
-               Objects.equals(formatterString, other.formatterString);
+               Objects.equals(formatter, other.formatter);
     }
 }

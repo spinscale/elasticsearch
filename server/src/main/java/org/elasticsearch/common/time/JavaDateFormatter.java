@@ -120,6 +120,7 @@ class JavaDateFormatter implements DateFormatter {
 
     @Override
     public int hashCode() {
+        // TODO add locale, remove printer, parsers?
         return Objects.hash(printer, format, Arrays.hashCode(parsers));
     }
 
@@ -130,6 +131,7 @@ class JavaDateFormatter implements DateFormatter {
         }
         JavaDateFormatter other = (JavaDateFormatter) obj;
 
+        // TODO add locale, remove printer parsers?
         return Objects.equals(format, other.format) &&
                Objects.equals(printer, other.printer) &&
                Arrays.equals(parsers, other.parsers);
