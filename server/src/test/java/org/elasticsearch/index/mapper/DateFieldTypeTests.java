@@ -62,13 +62,13 @@ public class DateFieldTypeTests extends FieldTypeTestCase {
         addModifier(new Modifier("format", false) {
             @Override
             public void modify(MappedFieldType ft) {
-                ((DateFieldType) ft).setDateTimeFormatter("basic_week_date", Locale.ROOT);
+                ((DateFieldType) ft).setDateTimeFormatter(DateFormatters.forPattern("basic_week_date", Locale.ROOT));
             }
         });
         addModifier(new Modifier("locale", false) {
             @Override
             public void modify(MappedFieldType ft) {
-                ((DateFieldType) ft).setDateTimeFormatter("date_optional_time", Locale.CANADA);
+                ((DateFieldType) ft).setDateTimeFormatter(DateFormatters.forPattern("date_optional_time", Locale.CANADA));
             }
         });
         nowInMillis = randomNonNegativeLong();

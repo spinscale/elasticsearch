@@ -55,6 +55,7 @@ import java.io.IOException;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.format.DateTimeParseException;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
@@ -78,7 +79,7 @@ public class DateFieldMapper extends FieldMapper {
     public static class Builder extends FieldMapper.Builder<Builder, DateFieldMapper> {
 
         private Boolean ignoreMalformed;
-        private String format;
+        private String format = DEFAULT_COMPOUND_DATE_TIME_FORMATTER.getFormatter();
         private Locale locale;
 
         public Builder(String name) {
@@ -107,19 +108,9 @@ public class DateFieldMapper extends FieldMapper {
             return Defaults.IGNORE_MALFORMED;
         }
 
-        /** Whether an explicit format for this date field has been set already. */
-        public boolean isDateTimeFormatterSet() {
-            return format != null;
-        }
-
-        public Builder dateTimeFormatter(String format, Locale locale) {
-            this.format = format;
+        public Builder locale(Locale locale) {
             this.locale = locale;
             return this;
-        }
-
-        public void locale(Locale locale) {
-            this.locale = locale;
         }
 
         public Locale locale() {
@@ -138,9 +129,9 @@ public class DateFieldMapper extends FieldMapper {
         @Override
         protected void setupFieldType(BuilderContext context) {
             super.setupFieldType(context);
-            if (Objects.equals(locale, fieldType().locale) == false ||
-                Objects.equals(format, fieldType().dateTimeFormatterString) == false && Strings.isEmpty(format) == false) {
-                fieldType().setDateTimeFormatter(format, locale);
+            if (Objects.equals(locale, fieldType().dateTimeFormatter.getLocale()) == false ||
+                (Objects.equals(format, fieldType().dateTimeFormatter.getFormatter()) == false && Strings.isEmpty(format) == false)) {
+                fieldType().setDateTimeFormatter(DateFormatters.forPattern(format, locale));
             }
         }
 
@@ -189,22 +180,20 @@ public class DateFieldMapper extends FieldMapper {
     }
 
     public static final class DateFieldType extends MappedFieldType {
-        private CompoundDateTimeFormatter dateTimeFormatter;
+        protected CompoundDateTimeFormatter dateTimeFormatter;
         protected DateMathParser dateMathParser;
-        protected String dateTimeFormatterString;
-        protected Locale locale;
 
         DateFieldType() {
             super();
             setTokenized(false);
             setHasDocValues(true);
             setOmitNorms(true);
-            setDateTimeFormatter(DEFAULT_COMPOUND_DATE_TIME_FORMATTER_STRING, Locale.ROOT);
+            setDateTimeFormatter(DEFAULT_COMPOUND_DATE_TIME_FORMATTER);
         }
 
         DateFieldType(DateFieldType other) {
             super(other);
-            setDateTimeFormatter(other.dateTimeFormatterString, other.locale);
+            setDateTimeFormatter(other.dateTimeFormatter);
         }
 
         @Override
@@ -216,12 +205,12 @@ public class DateFieldMapper extends FieldMapper {
         public boolean equals(Object o) {
             if (!super.equals(o)) return false;
             DateFieldType that = (DateFieldType) o;
-            return Objects.equals(locale, that.locale) && Objects.equals(dateTimeFormatterString, that.dateTimeFormatterString);
+            return Objects.equals(dateTimeFormatter, that.dateTimeFormatter);
         }
 
         @Override
         public int hashCode() {
-            return Objects.hash(super.hashCode(), dateTimeFormatterString, locale);
+            return Objects.hash(super.hashCode(), dateTimeFormatter);
         }
 
         @Override
@@ -233,10 +222,10 @@ public class DateFieldMapper extends FieldMapper {
         public void checkCompatibility(MappedFieldType fieldType, List<String> conflicts) {
             super.checkCompatibility(fieldType, conflicts);
             DateFieldType other = (DateFieldType) fieldType;
-            if (Objects.equals(dateTimeFormatterString, dateTimeFormatterString) == false) {
+            if (Objects.equals(dateTimeFormatter.getFormatter(), other.dateTimeFormatter.getFormatter()) == false) {
                 conflicts.add("mapper [" + name() + "] has different [format] values");
             }
-            if (Objects.equals(locale, other.locale) == false) {
+            if (Objects.equals(dateTimeFormatter.getLocale(), other.dateTimeFormatter.getLocale()) == false) {
                 conflicts.add("mapper [" + name() + "] has different [locale] values");
             }
         }
@@ -245,11 +234,9 @@ public class DateFieldMapper extends FieldMapper {
             return dateTimeFormatter;
         }
 
-        public void setDateTimeFormatter(String format, Locale locale) {
+        void setDateTimeFormatter(CompoundDateTimeFormatter formatter) {
             checkIfFrozen();
-            this.dateTimeFormatterString = format;
-            this.locale = locale;
-            this.dateTimeFormatter = DateFormatters.forPattern(format, locale);
+            this.dateTimeFormatter = formatter;
             this.dateMathParser = new DateMathParser(dateTimeFormatter);
         }
 
@@ -400,7 +387,7 @@ public class DateFieldMapper extends FieldMapper {
         public DocValueFormat docValueFormat(@Nullable String format, ZoneId timeZone) {
             CompoundDateTimeFormatter dateTimeFormatter = this.dateTimeFormatter;
             if (format != null) {
-                dateTimeFormatter = DateFormatters.forPattern(format, locale);
+                dateTimeFormatter = DateFormatters.forPattern(format, dateTimeFormatter.getLocale());
             }
             if (timeZone == null) {
                 timeZone = ZoneOffset.UTC;
@@ -463,7 +450,7 @@ public class DateFieldMapper extends FieldMapper {
         long timestamp;
         try {
             timestamp = fieldType().parse(dateAsString);
-        } catch (IllegalArgumentException e) {
+        } catch (DateTimeParseException e) {
             if (ignoreMalformed.value()) {
                 context.addIgnoredField(fieldType.name());
                 return;
@@ -507,12 +494,12 @@ public class DateFieldMapper extends FieldMapper {
         }
 
         if (includeDefaults
-                || fieldType().dateTimeFormatterString.equals(DEFAULT_COMPOUND_DATE_TIME_FORMATTER_STRING) == false) {
-            builder.field("format", fieldType().dateTimeFormatterString);
+                || fieldType().dateTimeFormatter().getFormatter().equals(DEFAULT_COMPOUND_DATE_TIME_FORMATTER.getFormatter()) == false) {
+            builder.field("format", fieldType().dateTimeFormatter().getFormatter());
         }
         if (includeDefaults
-                || fieldType().locale != Locale.ROOT) {
-            builder.field("locale", fieldType().locale);
+            || fieldType().dateTimeFormatter().getLocale().equals(DEFAULT_COMPOUND_DATE_TIME_FORMATTER.getLocale()) == false) {
+            builder.field("locale", fieldType().dateTimeFormatter().getLocale());
         }
     }
 }

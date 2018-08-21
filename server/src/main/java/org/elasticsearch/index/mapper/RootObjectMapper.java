@@ -302,8 +302,7 @@ public class RootObjectMapper extends ObjectMapper {
         if (dynamicDateTimeFormatters.explicit() || includeDefaults) {
             builder.startArray("dynamic_date_formats");
             for (CompoundDateTimeFormatter dateTimeFormatter : dynamicDateTimeFormatters.value()) {
-                // TODO FIXME
-//                builder.value(dateTimeFormatter.format());
+                builder.value(dateTimeFormatter.getFormatter());
             }
             builder.endArray();
         }

@@ -19,6 +19,7 @@
 
 package org.elasticsearch.search.aggregations.bucket.histogram;
 
+import com.carrotsearch.randomizedtesting.annotations.Repeat;
 import org.elasticsearch.Version;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.common.bytes.BytesReference;
@@ -66,17 +67,19 @@ public class ExtendedBoundsTests extends ESTestCase {
      * Construct a random {@link ExtendedBounds} in pre-parsed form.
      */
     public static ExtendedBounds randomParsedExtendedBounds() {
+        long maxDateValue = 253402300799999L; // end of year 9999
+        long minDateValue = -377705116800000L; // beginning of year -9999
         if (randomBoolean()) {
             // Construct with one missing bound
             if (randomBoolean()) {
-                return new ExtendedBounds(null, randomLong());
+                return new ExtendedBounds(null, maxDateValue);
             }
-            return new ExtendedBounds(randomLong(), null);
+            return new ExtendedBounds(minDateValue, null);
         }
-        long a = randomLong();
+        long a = randomLongBetween(minDateValue, maxDateValue);
         long b;
         do {
-            b = randomLong();
+            b = randomLongBetween(minDateValue, maxDateValue);
         } while (a == b);
         long min = min(a, b);
         long max = max(a, b);
@@ -94,6 +97,7 @@ public class ExtendedBoundsTests extends ESTestCase {
         return new ExtendedBounds(minAsStr, maxAsStr);
     }
 
+    @Repeat(iterations = 100)
     public void testParseAndValidate() {
         long now = randomLong();
         Settings indexSettings = Settings.builder().put(IndexMetaData.SETTING_VERSION_CREATED, Version.CURRENT)

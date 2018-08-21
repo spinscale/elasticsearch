@@ -100,8 +100,6 @@ public class DateHistogramValuesSourceBuilder extends CompositeValuesSourceBuild
     protected void innerWriteTo(StreamOutput out) throws IOException {
         out.writeLong(interval);
         out.writeOptionalWriteable(dateHistogramInterval);
-        boolean hasTimeZone = timeZone != null;
-        out.writeBoolean(hasTimeZone);
         out.writeOptionalZoneId(timeZone);
     }
 

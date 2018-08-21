@@ -41,6 +41,7 @@ import org.elasticsearch.index.mapper.MapperService;
 
 import java.io.IOException;
 import java.time.ZoneId;
+import java.time.zone.ZoneRulesException;
 import java.util.Objects;
 
 /**
@@ -261,7 +262,11 @@ public class RangeQueryBuilder extends AbstractQueryBuilder<RangeQueryBuilder> i
         if (timeZone == null) {
             throw new IllegalArgumentException("timezone cannot be null");
         }
-        this.timeZone = ZoneId.of(timeZone);
+        try {
+            this.timeZone = ZoneId.of(timeZone);
+        } catch (ZoneRulesException e) {
+            throw new IllegalArgumentException(e);
+        }
         return this;
     }
 

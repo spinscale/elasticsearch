@@ -134,4 +134,10 @@ class JavaDateFormatter implements DateFormatter {
                Objects.equals(printer, other.printer) &&
                Arrays.equals(parsers, other.parsers);
     }
+
+    @Override
+    public String toString() {
+        // TODO add locale
+        return String.format(Locale.ROOT, "format[%s]", format);
+    }
 }

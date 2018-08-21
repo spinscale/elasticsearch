@@ -176,7 +176,7 @@ public class DateHistogramTests extends BaseAggregationTestCase<DateHistogramAgg
                     // daylight-saving-times => rewrite if doesn't cross
                     tz = ZoneId.of("Europe/Paris");
                     builder.timeZone(tz);
-                    assertEquals(DateTimeZone.forOffsetHours(1), builder.rewriteTimeZone(shardContextThatDoesntCross));
+                    assertEquals(ZoneOffset.ofHours(1), builder.rewriteTimeZone(shardContextThatDoesntCross));
                     assertSame(tz, builder.rewriteTimeZone(shardContextThatCrosses));
 
                     // Rounded values are no longer all within the same transitions => no rewrite
@@ -189,7 +189,7 @@ public class DateHistogramTests extends BaseAggregationTestCase<DateHistogramAgg
                     builder.timeZone(tz);
 
                     builder.interval(1000L * 60 * 60 * 24); // ~ 1 day
-                    assertEquals(DateTimeZone.forOffsetHours(1), builder.rewriteTimeZone(shardContextThatDoesntCross));
+                    assertEquals(ZoneOffset.ofHours(1), builder.rewriteTimeZone(shardContextThatDoesntCross));
                     assertSame(tz, builder.rewriteTimeZone(shardContextThatCrosses));
 
                     // Because the interval is large, rounded values are not

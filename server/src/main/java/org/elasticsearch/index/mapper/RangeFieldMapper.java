@@ -42,6 +42,7 @@ import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.common.Explicit;
 import org.elasticsearch.common.Nullable;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.common.geo.ShapeRelation;
 import org.elasticsearch.common.network.InetAddresses;
@@ -92,7 +93,7 @@ public class RangeFieldMapper extends FieldMapper {
     public static class Builder extends FieldMapper.Builder<Builder, RangeFieldMapper> {
         private Boolean coerce;
         private Locale locale = Locale.ROOT;
-        private String formatter;
+        private String format;
 
         public Builder(String name, RangeType type) {
             super(name, new RangeFieldType(type), new RangeFieldType(type));
@@ -127,8 +128,8 @@ public class RangeFieldMapper extends FieldMapper {
             return Defaults.COERCE;
         }
 
-        public Builder dateTimeFormatterString(String formatter) {
-            this.formatter = formatter;
+        public Builder format(String format) {
+            this.format = format;
             return this;
         }
 
@@ -146,11 +147,11 @@ public class RangeFieldMapper extends FieldMapper {
             super.setupFieldType(context);
             CompoundDateTimeFormatter dateTimeFormatter = fieldType().dateTimeFormatter;
             if (fieldType().rangeType == RangeType.DATE) {
-                if (Objects.equals(builder.formatter, fieldType().dateTimeFormatter().getFormatter()) == false ||
+                if (Strings.hasLength(builder.format) && Objects.equals(builder.format, fieldType().dateTimeFormatter().getFormatter()) == false ||
                     Objects.equals(builder.locale, fieldType().dateTimeFormatter().getLocale()) == false) {
-                    fieldType().setDateTimeFormatter(DateFormatters.forPattern(formatter, locale));
+                    fieldType().setDateTimeFormatter(DateFormatters.forPattern(format, locale));
                 }
-            } else if (dateTimeFormatter != null) {
+            } else if (format != null) {
                 throw new IllegalArgumentException("field [" + name() + "] of type [" + fieldType().rangeType
                     + "] should not define a dateTimeFormatter unless it is a " + RangeType.DATE + " type");
             }
@@ -190,7 +191,7 @@ public class RangeFieldMapper extends FieldMapper {
                     builder.locale(LocaleUtils.parse(propNode.toString()));
                     iterator.remove();
                 } else if (propName.equals("format")) {
-                    builder.dateTimeFormatterString(propNode.toString());
+                    builder.format(propNode.toString());
                     iterator.remove();
                 } else if (TypeParsers.parseMultiField(builder, name, parserContext, propName, propNode)) {
                     iterator.remove();
@@ -219,7 +220,7 @@ public class RangeFieldMapper extends FieldMapper {
         RangeFieldType(RangeFieldType other) {
             super(other);
             this.rangeType = other.rangeType;
-            if (other.dateTimeFormatter() != null) {
+            if (other.rangeType == RangeType.DATE && other.dateTimeFormatter() != null) {
                 setDateTimeFormatter(other.dateTimeFormatter());
             }
         }

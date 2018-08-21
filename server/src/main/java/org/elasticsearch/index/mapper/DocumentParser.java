@@ -667,7 +667,7 @@ final class DocumentParser {
     private static Mapper.Builder<?, ?> newDateBuilder(String name, CompoundDateTimeFormatter dateTimeFormatter, Version indexCreated) {
         DateFieldMapper.Builder builder = new DateFieldMapper.Builder(name);
         if (dateTimeFormatter != null) {
-            builder.dateTimeFormatter(dateTimeFormatter.getFormatter(), dateTimeFormatter.getLocale());
+            builder.format(dateTimeFormatter.getFormatter()).locale(dateTimeFormatter.getLocale());
         }
         return builder;
     }
@@ -721,10 +721,7 @@ final class DocumentParser {
                     }
                     if (builder instanceof DateFieldMapper.Builder) {
                         DateFieldMapper.Builder dateBuilder = (DateFieldMapper.Builder) builder;
-                        // TODO does this make sense checking for false?
-                        if (dateBuilder.isDateTimeFormatterSet() == false) {
-                            dateBuilder.dateTimeFormatter(dateBuilder.format(), dateBuilder.locale());
-                        }
+                        dateBuilder.format(dateBuilder.format()).locale(dateBuilder.locale());
                     }
                     return builder;
                 }

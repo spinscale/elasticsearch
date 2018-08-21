@@ -21,6 +21,7 @@ package org.elasticsearch.common.joda;
 
 import org.elasticsearch.common.time.DateFormatter;
 import org.elasticsearch.common.time.DateFormatters;
+import org.elasticsearch.search.DocValueFormat;
 import org.elasticsearch.test.ESTestCase;
 import org.joda.time.DateTime;
 import org.joda.time.DateTimeZone;
@@ -465,11 +466,51 @@ public class JavaJodaTimeDuellingTests extends ESTestCase {
         assertSamePrinterOutput("strictYear", javaDate, jodaDate);
         assertSamePrinterOutput("strictYearMonth", javaDate, jodaDate);
         assertSamePrinterOutput("strictYearMonthDay", javaDate, jodaDate);
+        assertSamePrinterOutput("strict_date_optional_time||epoch_millis", javaDate, jodaDate);
     }
 
     public void testSeveralTimeFormats() {
         assertSameDate("2018-12-12", "year_month_day||ordinal_date");
         assertSameDate("2018-128", "year_month_day||ordinal_date");
+        assertSameDate("2018-08-20T10:57:45.427Z", "strict_date_optional_time||epoch_millis");
+        assertSameDate("2017-02-01T08:02:00.000-01", "strict_date_optional_time||epoch_millis");
+        assertSameDate("2017-02-01T08:02:00.000-01:00", "strict_date_optional_time||epoch_millis");
+    }
+
+    public void testSamePrinterOutputWithTimeZone() {
+        String format = "strict_date_optional_time||epoch_millis";
+        String dateInput = "2017-02-01T08:02:00.000-01:00";
+        CompoundDateTimeFormatter javaFormatter = DateFormatters.forPattern(format);
+        TemporalAccessor javaDate = javaFormatter.parse(dateInput);
+
+        FormatDateTimeFormatter jodaFormatter = Joda.forPattern(format);
+        DateTime dateTime = jodaFormatter.parser().parseDateTime(dateInput);
+
+        String javaDateString = javaFormatter.withZone(ZoneOffset.ofHours(-1)).format(javaDate);
+        String jodaDateString = jodaFormatter.printer().withZone(DateTimeZone.forOffsetHours(-1)).print(dateTime);
+        String message = String.format(Locale.ROOT, "expected string representation to be equal for format [%s]: joda [%s], java [%s]",
+            format, jodaDateString, javaDateString);
+        assertThat(message, javaDateString, is(jodaDateString));
+    }
+
+    // see https://github.com/elastic/elasticsearch/issues/14641
+    // TODO IS THIS NEEDED, SEE DateFieldMapperTests
+//    public void testParsingFloatsAsEpoch() {
+//        double epochFloatMillisFromEpoch = (randomDouble() * 2 - 1) * 1000000;
+//        String epochFloatValue = String.format(Locale.US, "%f", epochFloatMillisFromEpoch);
+//
+//        DateTime dateTime = Joda.forPattern("epoch_millis").parser().parseDateTime(epochFloatValue);
+//
+//        TemporalAccessor accessor = DateFormatters.forPattern("epoch_millis").parse(epochFloatValue);
+//        long epochMillis = DateFormatters.toZonedDateTime(accessor).toInstant().toEpochMilli();
+//        assertThat(dateTime.getMillis(), is(epochMillis));
+//    }
+
+    public void testDateFormatterWithLocale() {
+        Locale locale = randomLocale(random());
+        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("strict_date_optional_time||epoch_millis", locale);
+        assertThat(formatter.getFormatter(), is("strict_date_optional_time||epoch_millis"));
+        assertThat(formatter.getLocale(), is(locale));
     }
 
     private void assertSamePrinterOutput(String format, ZonedDateTime javaDate, DateTime jodaDate) {
