@@ -512,7 +512,21 @@ public class DateFormatters {
             .toFormatter(Locale.ROOT)
     );
 
-    private static final DateFormatter STRICT_DATE_HOUR_MINUTE_SECOND_MILLIS = STRICT_DATE_HOUR_MINUTE_SECOND_FRACTION;
+    private static final DateFormatter STRICT_DATE_HOUR_MINUTE_SECOND_MILLIS = new JavaDateFormatter(
+        "strict_date_hour_minute_second_fraction",
+        new DateTimeFormatterBuilder()
+            .append(STRICT_YEAR_MONTH_DAY_FORMATTER)
+            .appendLiteral("T")
+            .append(STRICT_HOUR_MINUTE_SECOND_MILLIS_PRINTER)
+            .toFormatter(Locale.ROOT),
+        new DateTimeFormatterBuilder()
+            .append(STRICT_YEAR_MONTH_DAY_FORMATTER)
+            .appendLiteral("T")
+            .append(STRICT_HOUR_MINUTE_SECOND_FORMATTER)
+            //  this one here is lenient as well to retain joda time based bwc compatibility
+            .appendFraction(MILLI_OF_SECOND, 1, 3, true)
+            .toFormatter(Locale.ROOT)
+    );
 
     /*
      * Returns a formatter for a two digit hour of day. (HH)
@@ -932,7 +946,17 @@ public class DateFormatters {
                 .append(HOUR_MINUTE_SECOND_MILLIS_FORMATTER)
                 .toFormatter(Locale.ROOT));
 
-    private static final DateFormatter DATE_HOUR_MINUTE_SECOND_FRACTION = DATE_HOUR_MINUTE_SECOND_MILLIS;
+    private static final DateFormatter DATE_HOUR_MINUTE_SECOND_FRACTION = new JavaDateFormatter("date_hour_minute_second_fraction",
+            new DateTimeFormatterBuilder()
+                .append(STRICT_YEAR_MONTH_DAY_FORMATTER)
+                .appendLiteral("T")
+                .append(STRICT_HOUR_MINUTE_SECOND_MILLIS_PRINTER)
+                .toFormatter(Locale.ROOT),
+            new DateTimeFormatterBuilder()
+                .append(DATE_FORMATTER)
+                .appendLiteral("T")
+                .append(HOUR_MINUTE_SECOND_MILLIS_FORMATTER)
+                .toFormatter(Locale.ROOT));
 
     /*
      * Returns a formatter that combines a full date, two digit hour of day,
@@ -1035,6 +1059,9 @@ public class DateFormatters {
      * second (HH:mm:ss.SSS).
      */
     private static final DateFormatter HOUR_MINUTE_SECOND_MILLIS = new JavaDateFormatter("hour_minute_second_millis",
+        STRICT_HOUR_MINUTE_SECOND_MILLIS_PRINTER, HOUR_MINUTE_SECOND_MILLIS_FORMATTER);
+
+    private static final DateFormatter HOUR_MINUTE_SECOND_FRACTION = new JavaDateFormatter("hour_minute_second_fraction",
         STRICT_HOUR_MINUTE_SECOND_MILLIS_PRINTER, HOUR_MINUTE_SECOND_MILLIS_FORMATTER);
 
     /*
@@ -1339,7 +1366,7 @@ public class DateFormatters {
         } else if ("hourMinuteSecond".equals(input) || "hour_minute_second".equals(input)) {
             return HOUR_MINUTE_SECOND;
         } else if ("hourMinuteSecondFraction".equals(input) || "hour_minute_second_fraction".equals(input)) {
-            return HOUR_MINUTE_SECOND_MILLIS;
+            return HOUR_MINUTE_SECOND_FRACTION;
         } else if ("hourMinuteSecondMillis".equals(input) || "hour_minute_second_millis".equals(input)) {
             return HOUR_MINUTE_SECOND_MILLIS;
         } else if ("ordinalDate".equals(input) || "ordinal_date".equals(input)) {

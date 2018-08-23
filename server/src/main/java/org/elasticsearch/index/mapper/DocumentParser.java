@@ -21,6 +21,7 @@ package org.elasticsearch.index.mapper;
 
 import org.apache.lucene.document.Field;
 import org.apache.lucene.index.IndexableField;
+import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.Version;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.collect.Tuple;
@@ -35,7 +36,6 @@ import org.elasticsearch.index.mapper.KeywordFieldMapper.KeywordFieldType;
 import org.elasticsearch.index.mapper.TextFieldMapper.TextFieldType;
 
 import java.io.IOException;
-import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -711,7 +711,7 @@ final class DocumentParser {
                 for (CompoundDateTimeFormatter dateTimeFormatter : context.root().dynamicDateTimeFormatters()) {
                     try {
                         dateTimeFormatter.parse(text);
-                    } catch (IllegalArgumentException | DateTimeParseException e) {
+                    } catch (ElasticsearchParseException e) {
                         // failure to parse this, continue
                         continue;
                     }

@@ -33,6 +33,7 @@ import org.apache.lucene.search.IndexOrDocValuesQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.util.BytesRef;
+import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.common.Explicit;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Strings;
@@ -55,7 +56,6 @@ import java.io.IOException;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
-import java.time.format.DateTimeParseException;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
@@ -455,7 +455,7 @@ public class DateFieldMapper extends FieldMapper {
         long timestamp;
         try {
             timestamp = fieldType().parse(dateAsString);
-        } catch (DateTimeParseException e) {
+        } catch (ElasticsearchParseException e) {
             if (ignoreMalformed.value()) {
                 context.addIgnoredField(fieldType.name());
                 return;

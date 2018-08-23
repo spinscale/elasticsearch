@@ -19,7 +19,12 @@
 
 package org.elasticsearch.common.joda;
 
+<<<<<<< HEAD
 import org.elasticsearch.common.time.DateFormatter;
+=======
+import org.elasticsearch.ElasticsearchParseException;
+import org.elasticsearch.common.time.CompoundDateTimeFormatter;
+>>>>>>> make compound date time formatter return serializable exception
 import org.elasticsearch.common.time.DateFormatters;
 import org.elasticsearch.search.DocValueFormat;
 import org.elasticsearch.test.ESTestCase;
@@ -205,7 +210,7 @@ public class JavaJodaTimeDuellingTests extends ESTestCase {
         // joda comes up with a different exception message here, so we have to adapt
         assertJodaParseException("2012-W1-8", "week_date",
             "Cannot parse \"2012-W1-8\": Value 8 for dayOfWeek must be in the range [1,7]");
-        assertJavaTimeParseException("2012-W1-8", "week_date", "Text '2012-W1-8' could not be parsed");
+        assertJavaTimeParseException("2012-W1-8", "week_date");
 
         assertSameDate("2012-W48-6T10:15:30.123Z", "week_date_time");
         assertSameDate("2012-W1-6T10:15:30.123Z", "week_date_time");
@@ -342,7 +347,7 @@ public class JavaJodaTimeDuellingTests extends ESTestCase {
         // joda comes up with a different exception message here, so we have to adapt
         assertJodaParseException("2012-W01-8", "strict_week_date",
             "Cannot parse \"2012-W01-8\": Value 8 for dayOfWeek must be in the range [1,7]");
-        assertJavaTimeParseException("2012-W01-8", "strict_week_date", "Text '2012-W01-8' could not be parsed");
+        assertJavaTimeParseException("2012-W01-8", "strict_week_date");
 
         assertSameDate("2012-W48-6T10:15:30.123Z", "strict_week_date_time");
         assertParseException("2012-W1-6T10:15:30.123Z", "strict_week_date_time");
@@ -538,7 +543,7 @@ public class JavaJodaTimeDuellingTests extends ESTestCase {
 
     private void assertParseException(String input, String format) {
         assertJodaParseException(input, format, "Invalid format: \"" + input);
-        assertJavaTimeParseException(input, format, "Text '" + input + "' could not be parsed");
+        assertJavaTimeParseException(input, format);
     }
 
     private void assertJodaParseException(String input, String format, String expectedMessage) {
@@ -547,9 +552,16 @@ public class JavaJodaTimeDuellingTests extends ESTestCase {
         assertThat(e.getMessage(), containsString(expectedMessage));
     }
 
+<<<<<<< HEAD
     private void assertJavaTimeParseException(String input, String format, String expectedMessage) {
         DateFormatter javaTimeFormatter = DateFormatters.forPattern(format);
         DateTimeParseException dateTimeParseException = expectThrows(DateTimeParseException.class, () -> javaTimeFormatter.parse(input));
         assertThat(dateTimeParseException.getMessage(), startsWith(expectedMessage));
+=======
+    private void assertJavaTimeParseException(String input, String format) {
+        CompoundDateTimeFormatter javaTimeFormatter = DateFormatters.forPattern(format);
+        ElasticsearchParseException e= expectThrows(ElasticsearchParseException.class, () -> javaTimeFormatter.parse(input));
+        assertThat(e.getMessage(), is("could not parse input [" + input + "] with date formatter [" + format+ "]"));
+>>>>>>> make compound date time formatter return serializable exception
     }
 }

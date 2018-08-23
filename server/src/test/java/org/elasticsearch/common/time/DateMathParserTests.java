@@ -270,7 +270,7 @@ public class DateMathParserTests extends ESTestCase {
 
     public void testIllegalDateFormat() {
         assertParseException("Expected bad timestamp exception", Long.toString(Long.MAX_VALUE) + "0", "failed to parse date field");
-        assertParseException("Expected bad date format exception", "123bogus", "could not be parsed");
+        assertParseException("Expected bad date format exception", "123bogus", "could not parse input [123bogus]");
     }
 
     public void testOnlyCallsNowIfNecessary() {

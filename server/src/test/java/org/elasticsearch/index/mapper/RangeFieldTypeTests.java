@@ -120,7 +120,7 @@ public class RangeFieldTypeTests extends FieldTypeTestCase {
 
         ElasticsearchParseException ex = expectThrows(ElasticsearchParseException.class,
             () -> fieldType.rangeQuery(from, to, true, true, relation, null, null, context));
-        assertThat(ex.getMessage(), containsString("Invalid value for MonthOfYear"));
+        assertThat(ex.getMessage(), containsString("could not parse input [2016-15-06T15:29:50+08:00]"));
 
         // setting mapping format which is compatible with those dates
         final CompoundDateTimeFormatter formatter = DateFormatters.forPattern("yyyy-dd-MM'T'HH:mm:ssZZZZZ");

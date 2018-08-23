@@ -18,6 +18,7 @@
  */
 package org.elasticsearch.search.aggregations.bucket;
 
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.action.index.IndexRequestBuilder;
 import org.elasticsearch.action.search.SearchPhaseExecutionException;
@@ -38,14 +39,12 @@ import org.hamcrest.Matchers;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
-import java.time.format.TextStyle;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
@@ -978,8 +977,10 @@ public class DateRangeIT extends ESIntegTestCase {
         Exception e = expectThrows(Exception.class, () -> client().prepareSearch(indexName).setSize(0)
                 .addAggregation(dateRange("date_range").field("date").addRange(1000000, 3000000).addRange(3000000, 4000000)).get());
         Throwable cause = e.getCause();
-        assertThat(cause, instanceOf(ElasticsearchParseException.class));
-        assertThat(cause.getMessage(), containsString("Text '1000000' could not be parsed at index 2"));
+        assertThat(cause, instanceOf(ElasticsearchException.class));
+        Throwable throwable = ((ElasticsearchException) cause).unwrapCause();
+        assertThat(throwable.getMessage(),
+            containsString("Could not parse input [1000000] with formatter [strict_hour_minute_second] to date"));
     }
 
     /**

@@ -66,7 +66,6 @@ import org.junit.Before;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.time.ZoneOffset;
-import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -84,6 +83,7 @@ import java.util.function.Supplier;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.instanceOf;
+import static org.hamcrest.Matchers.is;
 
 public class CompositeAggregatorTests extends AggregatorTestCase {
     private static MappedFieldType[] FIELD_TYPES;
@@ -1094,8 +1094,7 @@ public class CompositeAggregatorTests extends AggregatorTestCase {
                 },
                 (result) -> {}
             ));
-        assertThat(exc.getCause(), instanceOf(DateTimeParseException.class));
-        assertThat(exc.getCause().getMessage(), containsString("could not be parsed"));
+        assertThat(exc.getMessage(), is("could not parse input [1474329600000] with date formatter [yyyy-MM-dd]"));
     }
 
     public void testWithDateHistogramAndTimeZone() throws IOException {
