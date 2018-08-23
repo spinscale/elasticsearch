@@ -59,7 +59,6 @@ import org.elasticsearch.index.search.QueryStringQueryParser;
 import org.elasticsearch.search.internal.SearchContext;
 import org.elasticsearch.test.AbstractQueryTestCase;
 import org.hamcrest.Matchers;
-import org.joda.time.DateTimeZone;
 
 import java.io.IOException;
 import java.time.DateTimeException;
@@ -165,7 +164,7 @@ public class QueryStringQueryBuilderTests extends AbstractQueryTestCase<QueryStr
             queryStringQueryBuilder.useDisMax(randomBoolean());
         }
         if (randomBoolean()) {
-            queryStringQueryBuilder.timeZone(randomDateTimeZone().getID());
+            queryStringQueryBuilder.timeZone(randomZone().getId());
         }
         if (randomBoolean()) {
             queryStringQueryBuilder.autoGenerateSynonymsPhraseQuery(randomBoolean());
