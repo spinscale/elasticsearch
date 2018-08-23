@@ -31,7 +31,6 @@ import org.elasticsearch.common.time.DateFormatters;
 import org.elasticsearch.index.query.QueryShardContext;
 import org.elasticsearch.search.aggregations.BaseAggregationTestCase;
 import org.elasticsearch.search.aggregations.BucketOrder;
-import org.joda.time.DateTimeZone;
 
 import java.io.IOException;
 import java.time.ZoneId;
