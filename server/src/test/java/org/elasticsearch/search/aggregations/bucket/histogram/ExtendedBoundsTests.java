@@ -19,7 +19,6 @@
 
 package org.elasticsearch.search.aggregations.bucket.histogram;
 
-import com.carrotsearch.randomizedtesting.annotations.Repeat;
 import org.elasticsearch.Version;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.common.bytes.BytesReference;
@@ -97,7 +96,6 @@ public class ExtendedBoundsTests extends ESTestCase {
         return new ExtendedBounds(minAsStr, maxAsStr);
     }
 
-    @Repeat(iterations = 100)
     public void testParseAndValidate() {
         long now = randomLong();
         Settings indexSettings = Settings.builder().put(IndexMetaData.SETTING_VERSION_CREATED, Version.CURRENT)
