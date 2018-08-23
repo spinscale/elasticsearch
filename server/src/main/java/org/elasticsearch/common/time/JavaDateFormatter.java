@@ -69,7 +69,8 @@ class JavaDateFormatter implements DateFormatter {
                 return parsers[i].parse(input);
             } catch (DateTimeParseException e) {
                 if (failure == null) {
-                    failure = new ElasticsearchParseException("could not parse input [" + input + "] with date formatter [" + format + "]");
+                    failure = new ElasticsearchParseException("could not parse input [" + input +
+                        "] with date formatter [" + format + "]");
                 }
                 failure.addSuppressed(e);
             }
