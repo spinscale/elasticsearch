@@ -26,6 +26,8 @@ import org.elasticsearch.action.search.SearchType;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.time.CompoundDateTimeFormatter;
+import org.elasticsearch.common.time.DateFormatters;
 import org.elasticsearch.index.cache.request.RequestCacheStats;
 import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.search.aggregations.bucket.histogram.DateHistogramInterval;
@@ -244,15 +246,16 @@ public class IndicesRequestCacheIT extends ESIntegTestCase {
         assertAcked(client.admin().indices().prepareCreate("index-3").addMapping("type", "d", "type=date")
                 .setSettings(settings).get());
         ZonedDateTime now = ZonedDateTime.now(ZoneOffset.UTC);
-        indexRandom(true, client.prepareIndex("index-1", "type", "1").setSource("d", now),
-                client.prepareIndex("index-1", "type", "2").setSource("d", now.minusDays(1)),
-                client.prepareIndex("index-1", "type", "3").setSource("d", now.minusDays(2)),
-                client.prepareIndex("index-2", "type", "4").setSource("d", now.minusDays(3)),
-                client.prepareIndex("index-2", "type", "5").setSource("d", now.minusDays(4)),
-                client.prepareIndex("index-2", "type", "6").setSource("d", now.minusDays(5)),
-                client.prepareIndex("index-3", "type", "7").setSource("d", now.minusDays(6)),
-                client.prepareIndex("index-3", "type", "8").setSource("d", now.minusDays(7)),
-                client.prepareIndex("index-3", "type", "9").setSource("d", now.minusDays(8)));
+        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("strict_date_optional_time");
+        indexRandom(true, client.prepareIndex("index-1", "type", "1").setSource("d", formatter.format(now)),
+            client.prepareIndex("index-1", "type", "2").setSource("d", formatter.format(now.minusDays(1))),
+            client.prepareIndex("index-1", "type", "3").setSource("d", formatter.format(now.minusDays(2))),
+            client.prepareIndex("index-2", "type", "4").setSource("d", formatter.format(now.minusDays(3))),
+            client.prepareIndex("index-2", "type", "5").setSource("d", formatter.format(now.minusDays(4))),
+            client.prepareIndex("index-2", "type", "6").setSource("d", formatter.format(now.minusDays(5))),
+            client.prepareIndex("index-3", "type", "7").setSource("d", formatter.format(now.minusDays(6))),
+            client.prepareIndex("index-3", "type", "8").setSource("d", formatter.format(now.minusDays(7))),
+            client.prepareIndex("index-3", "type", "9").setSource("d", formatter.format(now.minusDays(8))));
         ensureSearchable("index-1", "index-2", "index-3");
         assertCacheState(client, "index-1", 0, 0);
         assertCacheState(client, "index-2", 0, 0);

@@ -58,6 +58,7 @@ import java.io.IOException;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.zone.ZoneOffsetTransition;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -394,7 +395,13 @@ public class DateHistogramAggregationBuilder extends ValuesSourceAggregationBuil
                 if (anyInstant != null) {
                     Instant instant = Instant.ofEpochMilli(anyInstant);
                     final long prevTransition = tz.getRules().previousTransition(instant).getInstant().toEpochMilli();
-                    final long nextTransition = tz.getRules().nextTransition(instant).getInstant().toEpochMilli();
+                    ZoneOffsetTransition nextOffsetTransition = tz.getRules().nextTransition(instant);
+                    final long nextTransition;
+                    if (nextOffsetTransition != null) {
+                        nextTransition = nextOffsetTransition.getInstant().toEpochMilli();
+                    } else {
+                        nextTransition = instant.toEpochMilli();
+                    }
 
                     // We need all not only values but also rounded values to be within
                     // [prevTransition, nextTransition].

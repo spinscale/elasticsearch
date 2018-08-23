@@ -983,7 +983,7 @@ public class DateHistogramIT extends ESIntegTestCase {
                         .field("date")
                         .timeZone(ZoneId.of("-02:00"))
                         .dateHistogramInterval(DateHistogramInterval.DAY)
-                        .format("yyyy-MM-dd:HH-mm-ssZZ"))
+                        .format("yyyy-MM-dd:HH-mm-ssZZZZZ"))
                 .execute().actionGet();
 
         assertThat(response.getHits().getTotalHits(), equalTo(5L));
@@ -1301,7 +1301,8 @@ public class DateHistogramIT extends ESIntegTestCase {
                 client().prepareIndex("test9491", "type").setSource("d", "2014-11-08T13:00:00Z"));
         ensureSearchable("test9491");
         SearchResponse response = client().prepareSearch("test9491")
-                .addAggregation(dateHistogram("histo").field("d").dateHistogramInterval(DateHistogramInterval.YEAR).timeZone(ZoneId.of("Asia/Jerusalem")))
+                .addAggregation(dateHistogram("histo").field("d").dateHistogramInterval(DateHistogramInterval.YEAR)
+                    .timeZone(ZoneId.of("Asia/Jerusalem")).format("yyyy-MM-dd'T'HH:mm:ss.SSSXXXXX"))
                 .execute().actionGet();
         assertSearchResponse(response);
         Histogram histo = response.getAggregations().get("histo");
@@ -1318,8 +1319,9 @@ public class DateHistogramIT extends ESIntegTestCase {
                 client().prepareIndex("test8209", "type").setSource("d", "2014-04-30T00:00:00Z"));
         ensureSearchable("test8209");
         SearchResponse response = client().prepareSearch("test8209")
-                .addAggregation(dateHistogram("histo").field("d").dateHistogramInterval(DateHistogramInterval.MONTH).timeZone(ZoneId.of("CET"))
-                        .minDocCount(0))
+                .addAggregation(dateHistogram("histo").field("d").dateHistogramInterval(DateHistogramInterval.MONTH)
+                    .format("yyyy-MM-dd'T'HH:mm:ss.SSSXXXXX")
+                    .timeZone(ZoneId.of("CET")).minDocCount(0))
                 .execute().actionGet();
         assertSearchResponse(response);
         Histogram histo = response.getAggregations().get("histo");
@@ -1413,8 +1415,10 @@ public class DateHistogramIT extends ESIntegTestCase {
         assertAcked(prepareCreate("cache_test_idx").addMapping("type", "d", "type=date")
                 .setSettings(Settings.builder().put("requests.cache.enable", true).put("number_of_shards", 1).put("number_of_replicas", 1))
                 .get());
-        indexRandom(true, client().prepareIndex("cache_test_idx", "type", "1").setSource("d", date(1, 1)),
-                client().prepareIndex("cache_test_idx", "type", "2").setSource("d", date(2, 1)));
+        String date = DateFieldMapper.DEFAULT_DATE_TIME_FORMATTER.format(date(1, 1));
+        String date2 = DateFieldMapper.DEFAULT_DATE_TIME_FORMATTER.format(date(2, 1));
+        indexRandom(true, client().prepareIndex("cache_test_idx", "type", "1").setSource("d", date),
+                client().prepareIndex("cache_test_idx", "type", "2").setSource("d", date2));
 
         // Make sure we are starting with a clear cache
         assertThat(client().admin().indices().prepareStats("cache_test_idx").setRequestCache(true).get().getTotal().getRequestCache()
