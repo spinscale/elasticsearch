@@ -28,12 +28,12 @@ import org.elasticsearch.search.aggregations.bucket.histogram.AutoDateHistogramA
 import org.elasticsearch.search.aggregations.bucket.histogram.InternalAutoDateHistogram.BucketInfo;
 import org.elasticsearch.search.aggregations.pipeline.PipelineAggregator;
 import org.elasticsearch.test.InternalMultiBucketAggregationTestCase;
-import org.joda.time.DateTime;
 
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -117,7 +117,7 @@ public class InternalAutoDateHistogramTests extends InternalMultiBucketAggregati
 
         for (InternalAutoDateHistogram histogram : inputs) {
             for (Histogram.Bucket bucket : histogram.getBuckets()) {
-                long bucketKey = ((DateTime) bucket.getKey()).getMillis();
+                long bucketKey = ((ZonedDateTime) bucket.getKey()).toInstant().toEpochMilli();
                 if (bucketKey < lowest) {
                     lowest = bucketKey;
                 }
@@ -173,7 +173,7 @@ public class InternalAutoDateHistogramTests extends InternalMultiBucketAggregati
 
             for (InternalAutoDateHistogram histogram : inputs) {
                 for (Histogram.Bucket bucket : histogram.getBuckets()) {
-                    long roundedBucketKey = roundingInfo.rounding.round(((DateTime) bucket.getKey()).getMillis());
+                    long roundedBucketKey = roundingInfo.rounding.round(((ZonedDateTime) bucket.getKey()).toInstant().toEpochMilli());
                     long docCount = bucket.getDocCount();
                     if (roundedBucketKey >= keyForBucket
                         && roundedBucketKey < keyForBucket + intervalInMillis) {
@@ -194,7 +194,7 @@ public class InternalAutoDateHistogramTests extends InternalMultiBucketAggregati
         // pick out the actual reduced values to the make the assertion more readable
         Map<Long, Long> actualCounts = new TreeMap<>();
         for (Histogram.Bucket bucket : reduced.getBuckets()) {
-            actualCounts.compute(((DateTime) bucket.getKey()).getMillis(),
+            actualCounts.compute(((ZonedDateTime) bucket.getKey()).toInstant().toEpochMilli(),
                     (key, oldValue) -> (oldValue == null ? 0 : oldValue) + bucket.getDocCount());
         }
         assertEquals(expectedCounts, actualCounts);

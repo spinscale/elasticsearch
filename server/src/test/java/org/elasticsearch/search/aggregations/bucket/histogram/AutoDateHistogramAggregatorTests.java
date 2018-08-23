@@ -33,6 +33,7 @@ import org.apache.lucene.store.Directory;
 import org.elasticsearch.Version;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.time.CompoundDateTimeFormatter;
 import org.elasticsearch.common.time.DateFormatters;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.mapper.DateFieldMapper;
@@ -41,13 +42,10 @@ import org.elasticsearch.search.aggregations.AggregatorTestCase;
 import org.elasticsearch.search.aggregations.MultiBucketConsumerService;
 import org.elasticsearch.search.aggregations.metrics.Stats;
 import org.hamcrest.Matchers;
-import org.joda.time.DateTime;
-import org.joda.time.chrono.ISOChronology;
-import org.joda.time.format.DateTimeFormat;
-import org.joda.time.format.DateTimeFormatter;
 
 import java.io.IOException;
 import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -640,12 +638,12 @@ public class AutoDateHistogramAggregatorTests extends AggregatorTestCase {
     }
 
     public void testAllSecondIntervals() throws IOException {
-        DateTimeFormatter format = DateTimeFormat.forPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
+        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
         List<String> dataset = new ArrayList<>();
-        DateTime startDate = new DateTime(2017, 01, 01, 00, 00, 00, ISOChronology.getInstanceUTC());
+        ZonedDateTime startDate = ZonedDateTime.of(2017, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         for (int i = 0; i < 600; i++) {
-            DateTime date = startDate.plusSeconds(i);
-            dataset.add(format.print(date));
+            ZonedDateTime date = startDate.plusSeconds(i);
+            dataset.add(formatter.format(date));
         }
 
         testSearchAndReduceCase(new MatchAllDocsQuery(), dataset,
@@ -707,12 +705,12 @@ public class AutoDateHistogramAggregatorTests extends AggregatorTestCase {
     }
 
     public void testAllMinuteIntervals() throws IOException {
-        DateTimeFormatter format = DateTimeFormat.forPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
+        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
         List<String> dataset = new ArrayList<>();
-        DateTime startDate = new DateTime(2017, 01, 01, 00, 00, 00, ISOChronology.getInstanceUTC());
+        ZonedDateTime startDate = ZonedDateTime.of(2017, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         for (int i = 0; i < 600; i++) {
-            DateTime date = startDate.plusMinutes(i);
-            dataset.add(format.print(date));
+            ZonedDateTime date = startDate.plusMinutes(i);
+            dataset.add(formatter.format(date));
         }
         testSearchAndReduceCase(new MatchAllDocsQuery(), dataset,
                 aggregation -> aggregation.setNumBuckets(600).field(DATE_FIELD),
@@ -772,12 +770,12 @@ public class AutoDateHistogramAggregatorTests extends AggregatorTestCase {
     }
 
     public void testAllHourIntervals() throws IOException {
-        DateTimeFormatter format = DateTimeFormat.forPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
+        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
         List<String> dataset = new ArrayList<>();
-        DateTime startDate = new DateTime(2017, 01, 01, 00, 00, 00, ISOChronology.getInstanceUTC());
+        ZonedDateTime startDate = ZonedDateTime.of(2017, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         for (int i = 0; i < 600; i++) {
-            DateTime date = startDate.plusHours(i);
-            dataset.add(format.print(date));
+            ZonedDateTime date = startDate.plusHours(i);
+            dataset.add(formatter.format(date));
         }
         testSearchAndReduceCase(new MatchAllDocsQuery(), dataset,
                 aggregation -> aggregation.setNumBuckets(600).field(DATE_FIELD),
@@ -826,12 +824,12 @@ public class AutoDateHistogramAggregatorTests extends AggregatorTestCase {
     }
 
     public void testAllDayIntervals() throws IOException {
-        DateTimeFormatter format = DateTimeFormat.forPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
+        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
         List<String> dataset = new ArrayList<>();
-        DateTime startDate = new DateTime(2017, 01, 01, 00, 00, 00, ISOChronology.getInstanceUTC());
+        ZonedDateTime startDate = ZonedDateTime.of(2017, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         for (int i = 0; i < 700; i++) {
-            DateTime date = startDate.plusDays(i);
-            dataset.add(format.print(date));
+            ZonedDateTime date = startDate.plusDays(i);
+            dataset.add(formatter.format(date));
         }
         testSearchAndReduceCase(new MatchAllDocsQuery(), dataset,
                 aggregation -> aggregation.setNumBuckets(700).field(DATE_FIELD),
@@ -869,12 +867,12 @@ public class AutoDateHistogramAggregatorTests extends AggregatorTestCase {
     }
 
     public void testAllMonthIntervals() throws IOException {
-        DateTimeFormatter format = DateTimeFormat.forPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
+        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
         List<String> dataset = new ArrayList<>();
-        DateTime startDate = new DateTime(2017, 01, 01, 00, 00, 00, ISOChronology.getInstanceUTC());
+        ZonedDateTime startDate = ZonedDateTime.of(2017, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         for (int i = 0; i < 600; i++) {
-            DateTime date = startDate.plusMonths(i);
-            dataset.add(format.print(date));
+            ZonedDateTime date = startDate.plusMonths(i);
+            dataset.add(formatter.format(date));
         }
         testSearchAndReduceCase(new MatchAllDocsQuery(), dataset,
                 aggregation -> aggregation.setNumBuckets(600).field(DATE_FIELD),
@@ -912,12 +910,12 @@ public class AutoDateHistogramAggregatorTests extends AggregatorTestCase {
     }
 
     public void testAllYearIntervals() throws IOException {
-        DateTimeFormatter format = DateTimeFormat.forPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
+        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
         List<String> dataset = new ArrayList<>();
-        DateTime startDate = new DateTime(2017, 01, 01, 00, 00, 00, ISOChronology.getInstanceUTC());
+        ZonedDateTime startDate = ZonedDateTime.of(2017, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         for (int i = 0; i < 600; i++) {
-            DateTime date = startDate.plusYears(i);
-            dataset.add(format.print(date));
+            ZonedDateTime date = startDate.plusYears(i);
+            dataset.add(formatter.format(date));
         }
         testSearchAndReduceCase(new MatchAllDocsQuery(), dataset, aggregation -> aggregation.setNumBuckets(600).field(DATE_FIELD),
                 histogram -> {

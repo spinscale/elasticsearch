@@ -32,10 +32,10 @@ import org.elasticsearch.search.aggregations.KeyComparable;
 import org.elasticsearch.search.aggregations.bucket.MultiBucketsAggregation;
 import org.elasticsearch.search.aggregations.bucket.histogram.AutoDateHistogramAggregationBuilder.RoundingInfo;
 import org.elasticsearch.search.aggregations.pipeline.PipelineAggregator;
-import org.joda.time.DateTime;
-import org.joda.time.DateTimeZone;
 
 import java.io.IOException;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -108,7 +108,7 @@ public final class InternalAutoDateHistogram extends
 
         @Override
         public Object getKey() {
-            return new DateTime(key, DateTimeZone.UTC);
+            return Instant.ofEpochMilli(key).atZone(ZoneOffset.UTC);
         }
 
         @Override
