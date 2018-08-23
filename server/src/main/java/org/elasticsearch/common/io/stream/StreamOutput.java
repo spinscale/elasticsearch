@@ -678,7 +678,6 @@ public abstract class StreamOutput extends OutputStream {
         writers.put(ZonedDateTime.class, (o, v) -> {
             o.writeByte((byte) 23);
             final ZonedDateTime zonedDateTime = (ZonedDateTime) v;
-            zonedDateTime.getZone().getId();
             o.writeString(zonedDateTime.getZone().getId());
             o.writeLong(zonedDateTime.toInstant().toEpochMilli());
         });

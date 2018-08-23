@@ -173,7 +173,7 @@ public class DateDerivativeIT extends ESIntegTestCase {
         ZonedDateTime key = ZonedDateTime.of(2012, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         Histogram.Bucket bucket = buckets.get(0);
         assertThat(bucket, notNullValue());
-        assertThat((ZonedDateTime) bucket.getKey(), equalTo(key));
+        assertThat(bucket.getKey(), equalTo(key));
         assertThat(bucket.getDocCount(), equalTo(1L));
         Derivative docCountDeriv = bucket.getAggregations().get("deriv");
         assertThat(docCountDeriv, nullValue());
@@ -181,7 +181,7 @@ public class DateDerivativeIT extends ESIntegTestCase {
         key = ZonedDateTime.of(2012, 2, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         bucket = buckets.get(1);
         assertThat(bucket, notNullValue());
-        assertThat((ZonedDateTime) bucket.getKey(), equalTo(key));
+        assertThat(bucket.getKey(), equalTo(key));
         assertThat(bucket.getDocCount(), equalTo(2L));
         docCountDeriv = bucket.getAggregations().get("deriv");
         assertThat(docCountDeriv, notNullValue());
@@ -191,7 +191,7 @@ public class DateDerivativeIT extends ESIntegTestCase {
         key = ZonedDateTime.of(2012, 3, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         bucket = buckets.get(2);
         assertThat(bucket, notNullValue());
-        assertThat((ZonedDateTime) bucket.getKey(), equalTo(key));
+        assertThat(bucket.getKey(), equalTo(key));
         assertThat(bucket.getDocCount(), equalTo(3L));
         docCountDeriv = bucket.getAggregations().get("deriv");
         assertThat(docCountDeriv, notNullValue());
@@ -207,7 +207,7 @@ public class DateDerivativeIT extends ESIntegTestCase {
         List<IndexRequestBuilder> builders = new ArrayList<>();
 
         ZoneId timezone = ZoneId.of("CET");
-        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("yyyy-MM-ddTHH:mm:ss").withZone(timezone);
+        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(timezone);
         addNTimes(1, IDX_DST_START, DateFormatters.toZonedDateTime(formatter.parse("2012-03-24T01:00:00")), builders);
         // day with dst shift, only 23h long
         addNTimes(2, IDX_DST_START, DateFormatters.toZonedDateTime(formatter.parse("2012-03-25T01:00:00")), builders);
@@ -248,7 +248,7 @@ public class DateDerivativeIT extends ESIntegTestCase {
         ZoneId timezone = ZoneId.of("CET");
         List<IndexRequestBuilder> builders = new ArrayList<>();
 
-        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("yyyy-MM-ddTHH:mm:ss").withZone(timezone);
+        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(timezone);
         addNTimes(1, IDX_DST_END, DateFormatters.toZonedDateTime(formatter.parse("2012-10-27T01:00:00")), builders);
         // day with dst shift -1h, 25h long
         addNTimes(2, IDX_DST_END, DateFormatters.toZonedDateTime(formatter.parse("2012-10-28T01:00:00")), builders);
@@ -290,7 +290,7 @@ public class DateDerivativeIT extends ESIntegTestCase {
         ZoneId timezone = ZoneId.of("Asia/Kathmandu");
         List<IndexRequestBuilder> builders = new ArrayList<>();
 
-        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("yyyy-MM-ddTHH:mm:ss").withZone(timezone);
+        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(timezone);
         addNTimes(1, IDX_DST_KATHMANDU, DateFormatters.toZonedDateTime(formatter.parse("1985-12-31T22:30:00")), builders);
         // the shift happens during the next bucket, which includes the 45min that do not start on the full hour
         addNTimes(2, IDX_DST_KATHMANDU, DateFormatters.toZonedDateTime(formatter.parse("1985-12-31T23:30:00")), builders);

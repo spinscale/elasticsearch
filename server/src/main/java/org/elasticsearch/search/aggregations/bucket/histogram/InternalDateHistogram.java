@@ -34,10 +34,10 @@ import org.elasticsearch.search.aggregations.InternalOrder;
 import org.elasticsearch.search.aggregations.KeyComparable;
 import org.elasticsearch.search.aggregations.bucket.MultiBucketsAggregation;
 import org.elasticsearch.search.aggregations.pipeline.PipelineAggregator;
-import org.joda.time.DateTime;
-import org.joda.time.DateTimeZone;
 
 import java.io.IOException;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
@@ -112,7 +112,7 @@ public final class InternalDateHistogram extends InternalMultiBucketAggregation<
 
         @Override
         public Object getKey() {
-            return new DateTime(key, DateTimeZone.UTC);
+            return Instant.ofEpochMilli(key).atZone(ZoneOffset.UTC);
         }
 
         @Override
