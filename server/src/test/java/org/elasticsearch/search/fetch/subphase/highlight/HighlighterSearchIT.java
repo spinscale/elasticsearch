@@ -2969,7 +2969,8 @@ public class HighlighterSearchIT extends ESIntegTestCase {
             .get());
         ZonedDateTime now = ZonedDateTime.now(ZoneOffset.UTC);
         CompoundDateTimeFormatter formatter = DateFormatters.forPattern("strict_date_optional_time");
-        indexRandom(true, client().prepareIndex("index-1", "type", "1").setSource("d", now, "field", "hello world"),
+        indexRandom(true,
+            client().prepareIndex("index-1", "type", "1").setSource("d", formatter.format(now), "field", "hello world"),
             client().prepareIndex("index-1", "type", "2").setSource("d", formatter.format(now.minusDays(1)), "field", "hello"),
             client().prepareIndex("index-1", "type", "3").setSource("d", formatter.format(now.minusDays(2)), "field", "world"));
         ensureSearchable("index-1");

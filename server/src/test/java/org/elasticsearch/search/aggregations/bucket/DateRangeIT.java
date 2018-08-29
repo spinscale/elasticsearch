@@ -979,7 +979,7 @@ public class DateRangeIT extends ESIntegTestCase {
         assertThat(cause, instanceOf(ElasticsearchException.class));
         Throwable throwable = ((ElasticsearchException) cause).unwrapCause();
         assertThat(throwable.getMessage(),
-            containsString("Could not parse input [1000000] with formatter [strict_hour_minute_second] to date"));
+            containsString("could not parse input [1000000] with date formatter [strict_hour_minute_second]"));
     }
 
     /**
