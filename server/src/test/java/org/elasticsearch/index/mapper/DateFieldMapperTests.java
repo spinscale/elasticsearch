@@ -39,6 +39,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.util.Collection;
+import java.util.Locale;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.notNullValue;
@@ -219,37 +220,39 @@ public class DateFieldMapperTests extends ESSingleNodeTestCase {
         assertEquals(1457654400000L, pointField.numericValue().longValue());
     }
 
-    // TODO IS THIS NEEDED
-//    public void testFloatEpochFormat() throws IOException {
-//        String mapping = Strings.toString(XContentFactory.jsonBuilder().startObject().startObject("type")
-//                .startObject("properties").startObject("field").field("type", "date")
-//                .field("format", "epoch_millis").endObject().endObject()
-//                .endObject().endObject());
-//
-//        DocumentMapper mapper = parser.parse("type", new CompressedXContent(mapping));
-//
-//        assertEquals(mapping, mapper.mappingSource().toString());
-//
-//        double epochFloatMillisFromEpoch = (randomDouble() * 2 - 1) * 1000000;
-//        String epochFloatValue = String.format(Locale.US, "%f", epochFloatMillisFromEpoch);
-//
-//        ParsedDocument doc = mapper.parse(SourceToParse.source("test", "type", "1", BytesReference
-//                .bytes(XContentFactory.jsonBuilder()
-//                        .startObject()
-//                        .field("field", epochFloatValue)
-//                        .endObject()),
-//                XContentType.JSON));
-//
-//        IndexableField[] fields = doc.rootDoc().getFields("field");
-//        assertEquals(2, fields.length);
-//        IndexableField pointField = fields[0];
-//        assertEquals((long)epochFloatMillisFromEpoch, pointField.numericValue().longValue());
-//    }
+    @AwaitsFix(bugUrl = "IS THIS REALLY NEEDED") // TODO IS THIS NEEDED
+    public void testFloatEpochFormat() throws IOException {
+        String mapping = Strings.toString(XContentFactory.jsonBuilder().startObject().startObject("type")
+                .startObject("properties").startObject("field").field("type", "date")
+                .field("format", "epoch_millis").endObject().endObject()
+                .endObject().endObject());
+
+        DocumentMapper mapper = parser.parse("type", new CompressedXContent(mapping));
+
+        assertEquals(mapping, mapper.mappingSource().toString());
+
+        double epochFloatMillisFromEpoch = (randomDouble() * 2 - 1) * 1000000;
+        String epochFloatValue = String.format(Locale.US, "%f", epochFloatMillisFromEpoch);
+
+        ParsedDocument doc = mapper.parse(SourceToParse.source("test", "type", "1", BytesReference
+                .bytes(XContentFactory.jsonBuilder()
+                        .startObject()
+                        .field("field", epochFloatValue)
+                        .endObject()),
+                XContentType.JSON));
+
+        IndexableField[] fields = doc.rootDoc().getFields("field");
+        assertEquals(2, fields.length);
+        IndexableField pointField = fields[0];
+        assertEquals((long)epochFloatMillisFromEpoch, pointField.numericValue().longValue());
+    }
 
     public void testChangeLocale() throws IOException {
         String mapping = Strings.toString(XContentFactory.jsonBuilder().startObject().startObject("type")
-                .startObject("properties").startObject("field").field("type", "date").field("locale", "fr").endObject().endObject()
-                .endObject().endObject());
+                .startObject("properties").startObject("field").field("type", "date")
+                    .field("format", "E, d MMM yyyy HH:mm:ss Z")
+                    .field("locale", "de")
+            .endObject().endObject().endObject().endObject());
 
         DocumentMapper mapper = parser.parse("type", new CompressedXContent(mapping));
 
@@ -258,7 +261,7 @@ public class DateFieldMapperTests extends ESSingleNodeTestCase {
         mapper.parse(SourceToParse.source("test", "type", "1", BytesReference
                 .bytes(XContentFactory.jsonBuilder()
                         .startObject()
-                        .field("field", 1457654400)
+                        .field("field", "Mi., 06 Dez. 2000 02:55:00 -0800")
                         .endObject()),
                 XContentType.JSON));
     }

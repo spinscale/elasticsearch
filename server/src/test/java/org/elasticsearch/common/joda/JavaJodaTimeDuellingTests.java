@@ -26,10 +26,12 @@ import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.common.time.CompoundDateTimeFormatter;
 >>>>>>> make compound date time formatter return serializable exception
 import org.elasticsearch.common.time.DateFormatters;
+import org.elasticsearch.common.util.LocaleUtils;
 import org.elasticsearch.test.ESTestCase;
 import org.joda.time.DateTime;
 import org.joda.time.DateTimeZone;
 
+import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
@@ -70,6 +72,16 @@ public class JavaJodaTimeDuellingTests extends ESTestCase {
         assertSameDate("2010 12 06 11:05:15", "yyyy dd MM HH:mm:ss");
         assertSameDate("12/06", "dd/MM");
         assertSameDate("Nov 24 01:29:01 -0800", "MMM dd HH:mm:ss Z");
+
+        // also ensure that locale based dates are the same
+        assertSameDate("Di., 05 Dez. 2000 02:55:00 -0800", "E, d MMM yyyy HH:mm:ss Z", LocaleUtils.parse("de"));
+        assertSameDate("Mi., 06 Dez. 2000 02:55:00 -0800", "E, d MMM yyyy HH:mm:ss Z", LocaleUtils.parse("de"));
+        assertSameDate("Do., 07 Dez. 2000 00:00:00 -0800", "E, d MMM yyyy HH:mm:ss Z", LocaleUtils.parse("de"));
+        assertSameDate("Fr., 08 Dez. 2000 00:00:00 -0800", "E, d MMM yyyy HH:mm:ss Z", LocaleUtils.parse("de"));
+
+        DateTime dateTimeNow = DateTime.now(DateTimeZone.UTC);
+        ZonedDateTime javaTimeNow = Instant.ofEpochMilli(dateTimeNow.getMillis()).atZone(ZoneOffset.UTC);
+        assertSamePrinterOutput("E, d MMM yyyy HH:mm:ss Z", LocaleUtils.parse("de"), javaTimeNow, dateTimeNow);
     }
 
     public void testDuellingFormatsValidParsing() {
@@ -525,11 +537,34 @@ public class JavaJodaTimeDuellingTests extends ESTestCase {
         assertThat(message, javaTimeOut, is(jodaTimeOut));
     }
 
+    private void assertSamePrinterOutput(String format, Locale locale, ZonedDateTime javaDate, DateTime jodaDate) {
+        assertThat(jodaDate.getMillis(), is(javaDate.toInstant().toEpochMilli()));
+        String javaTimeOut = DateFormatters.forPattern(format, locale).format(javaDate);
+        String jodaTimeOut = Joda.forPattern(format, locale).printer().print(jodaDate);
+        String message = String.format(Locale.ROOT, "expected string representation to be equal for format [%s]: joda [%s], java [%s]",
+                format, jodaTimeOut, javaTimeOut);
+        assertThat(message, javaTimeOut, is(jodaTimeOut));
+    }
+
     private void assertSameDate(String input, String format) {
         FormatDateTimeFormatter jodaFormatter = Joda.forPattern(format);
         DateTime jodaDateTime = jodaFormatter.parser().parseDateTime(input);
 
         DateFormatter javaTimeFormatter = DateFormatters.forPattern(format);
+        TemporalAccessor javaTimeAccessor = javaTimeFormatter.parse(input);
+        ZonedDateTime zonedDateTime = DateFormatters.toZonedDateTime(javaTimeAccessor);
+
+        String msg = String.format(Locale.ROOT, "Input [%s] Format [%s] Joda [%s], Java [%s]", input, format, jodaDateTime,
+            DateTimeFormatter.ISO_INSTANT.format(zonedDateTime.toInstant()));
+
+        assertThat(msg, jodaDateTime.getMillis(), is(zonedDateTime.toInstant().toEpochMilli()));
+    }
+
+    private void assertSameDate(String input, String format, Locale locale) {
+        FormatDateTimeFormatter jodaFormatter = Joda.forPattern(format, locale);
+        DateTime jodaDateTime = jodaFormatter.parser().parseDateTime(input);
+
+        CompoundDateTimeFormatter javaTimeFormatter = DateFormatters.forPattern(format, locale);
         TemporalAccessor javaTimeAccessor = javaTimeFormatter.parse(input);
         ZonedDateTime zonedDateTime = DateFormatters.toZonedDateTime(javaTimeAccessor);
 
