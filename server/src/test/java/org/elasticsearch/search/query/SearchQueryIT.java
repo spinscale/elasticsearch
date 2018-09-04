@@ -1757,6 +1757,34 @@ public class SearchQueryIT extends ESIntegTestCase {
         assertThat(searchResponse.getHits().getAt(0).getId(), is("4"));
     }
 
+    public void testRangeQueryWithLocaleMapping() throws Exception {
+        assertAcked(prepareCreate("test")
+            .addMapping("type1", jsonBuilder().startObject().startObject("properties").startObject("date_field")
+                    .field("type", "date")
+                    .field("format", "E, d MMM yyyy HH:mm:ss Z")
+                    .field("locale", "de")
+                .endObject().endObject().endObject()));
+
+        indexRandom(true,
+            client().prepareIndex("test", "type1", "1").setSource("date_field", "Mi., 06 Dez. 2000 02:55:00 -0800"),
+            client().prepareIndex("test", "type1", "2").setSource("date_field", "Do., 07 Dez. 2000 02:55:00 -0800")
+        );
+
+        SearchResponse searchResponse = client().prepareSearch("test")
+            .setQuery(QueryBuilders.rangeQuery("date_field")
+                .gte("Di., 05 Dez. 2000 02:55:00 -0800")
+                .lte("Do., 07 Dez. 2000 00:00:00 -0800"))
+            .get();
+        assertHitCount(searchResponse, 1L);
+
+        searchResponse = client().prepareSearch("test")
+            .setQuery(QueryBuilders.rangeQuery("date_field")
+                .gte("Di., 05 Dez. 2000 02:55:00 -0800")
+                .lte("Fr., 08 Dez. 2000 00:00:00 -0800"))
+            .get();
+        assertHitCount(searchResponse, 2L);
+    }
+
     public void testSearchEmptyDoc() {
         assertAcked(prepareCreate("test").setSettings("{\"index.analysis.analyzer.default.type\":\"keyword\"}", XContentType.JSON));
         client().prepareIndex("test", "type1", "1").setSource("{}", XContentType.JSON).get();
