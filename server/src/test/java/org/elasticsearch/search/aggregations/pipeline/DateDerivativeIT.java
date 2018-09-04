@@ -313,7 +313,6 @@ public class DateDerivativeIT extends ESIntegTestCase {
      */
     // This test fails because we cannot parse negative epoch milli seconds yet... but perhaps we dont have to if we use instants in the
     // rangefield method?
-    @AwaitsFix(bugUrl = "NO PUBLIC URL")
     public void testSingleValuedFieldNormalised_timeZone_AsiaKathmandu() throws Exception {
         createIndex(IDX_DST_KATHMANDU);
         ZoneId timezone = ZoneId.of("Asia/Kathmandu");

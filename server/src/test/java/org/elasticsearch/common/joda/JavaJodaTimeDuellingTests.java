@@ -41,17 +41,6 @@ import static org.hamcrest.Matchers.is;
 
 public class JavaJodaTimeDuellingTests extends ESTestCase {
 
-    public void testNegativeAndLowEpochs() {
-        assertSameDate("5000", "epoch_second");
-        assertSameDate("5", "epoch_second");
-        assertSameDate("-5000", "epoch_second");
-        assertSameDate("-5", "epoch_second");
-        assertSameDate("-5435678456", "epoch_second");
-        // TODO FIXME
-//        assertSameDate("5000", "epoch_millis");
-//        assertSameDate("-5000", "epoch_millis");
-    }
-
     public void testTimeZoneFormatting() {
         assertSameDate("2001-01-01T00:00:00Z", "date_time_no_millis");
         // the following fail under java 8 but work under java 10, needs investigation
