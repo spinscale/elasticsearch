@@ -28,11 +28,9 @@ import java.time.format.DateTimeParseException;
 import java.time.temporal.TemporalAccessor;
 import java.time.temporal.TemporalField;
 import java.util.Arrays;
-import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 
 class JavaDateFormatter implements DateFormatter {
 
@@ -45,11 +43,8 @@ class JavaDateFormatter implements DateFormatter {
         if (distinctZones > 1) {
             throw new IllegalArgumentException("formatters must have the same time zone");
         }
-        Set<Locale> locales = new HashSet<>(parsers.length);
-        for (DateTimeFormatter parser : parsers) {
-            locales.add(parser.getLocale());
-        }
-        if (locales.size() > 1) {
+        long distinctLocales = Arrays.stream(parsers).map(DateTimeFormatter::getLocale).distinct().count();
+        if (distinctLocales > 1) {
             throw new IllegalArgumentException("formatters must have the same locale");
         }
         this.printer = printer;
@@ -69,6 +64,7 @@ class JavaDateFormatter implements DateFormatter {
                 return parsers[i].parse(input);
             } catch (DateTimeParseException e) {
                 if (failure == null) {
+                    // TODO mention locale
                     failure = new ElasticsearchParseException("could not parse input [" + input +
                         "] with date formatter [" + format + "]");
                 }
