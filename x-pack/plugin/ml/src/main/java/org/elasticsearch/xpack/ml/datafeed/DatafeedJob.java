@@ -30,6 +30,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -98,8 +99,9 @@ class DatafeedJob {
         }
 
         String msg = Messages.getMessage(Messages.JOB_AUDIT_DATAFEED_STARTED_FROM_TO,
-                DateFieldMapper.DEFAULT_DATE_TIME_FORMATTER.format(Instant.ofEpochMilli(lookbackStartTimeMs)),
-                endTime == null ? "real-time" : DateFieldMapper.DEFAULT_DATE_TIME_FORMATTER.format(Instant.ofEpochMilli(lookbackEnd)),
+                DateFieldMapper.DEFAULT_DATE_TIME_FORMATTER.format(Instant.ofEpochMilli(lookbackStartTimeMs).atZone(ZoneOffset.UTC)),
+                endTime == null ? "real-time" :
+                    DateFieldMapper.DEFAULT_DATE_TIME_FORMATTER.format(Instant.ofEpochMilli(lookbackEnd).atZone(ZoneOffset.UTC)),
                 TimeValue.timeValueMillis(frequencyMs).getStringRep());
         auditor.info(jobId, msg);
         LOGGER.info("[{}] {}", jobId, msg);
