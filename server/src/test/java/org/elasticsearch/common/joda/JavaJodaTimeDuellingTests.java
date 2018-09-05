@@ -26,12 +26,10 @@ import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.common.time.CompoundDateTimeFormatter;
 >>>>>>> make compound date time formatter return serializable exception
 import org.elasticsearch.common.time.DateFormatters;
-import org.elasticsearch.common.util.LocaleUtils;
 import org.elasticsearch.test.ESTestCase;
 import org.joda.time.DateTime;
 import org.joda.time.DateTimeZone;
 
-import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
@@ -40,7 +38,6 @@ import java.util.Locale;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
-import static org.hamcrest.Matchers.startsWith;
 
 public class JavaJodaTimeDuellingTests extends ESTestCase {
 
