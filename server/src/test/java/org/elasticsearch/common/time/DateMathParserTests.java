@@ -252,12 +252,8 @@ public class DateMathParserTests extends ESTestCase {
     }
 
     void assertParseException(String msg, String date, String exc) {
-        try {
-            parser.parse(date, () -> 0);
-            fail("Date: " + date + "\n" + msg);
-        } catch (ElasticsearchParseException e) {
-            assertThat(ExceptionsHelper.detailedMessage(e), containsString(exc));
-        }
+        ElasticsearchParseException e = expectThrows(ElasticsearchParseException.class, () -> parser.parse(date, () -> 0));
+        assertThat(msg, ExceptionsHelper.detailedMessage(e), containsString(exc));
     }
 
     public void testIllegalMathFormat() {
@@ -269,7 +265,7 @@ public class DateMathParserTests extends ESTestCase {
     }
 
     public void testIllegalDateFormat() {
-        assertParseException("Expected bad timestamp exception", Long.toString(Long.MAX_VALUE) + "0", "failed to parse date field");
+        assertParseException("Expected bad timestamp exception", Long.toString(Long.MAX_VALUE) + "0", "could not parse input");
         assertParseException("Expected bad date format exception", "123bogus", "could not parse input [123bogus]");
     }
 

@@ -358,13 +358,14 @@ public class DateFormatters {
      * Returns a basic formatter that combines a basic weekyear date and time
      * without millis, separated by a 'T' (xxxx'W'wwe'T'HHmmssX).
      */
-    private static final DateFormatter STRICT_BASIC_WEEK_DATE_TIME_NO_MILLIS = new JavaDateFormatter("strict_basic_week_date_no_millis",
-        new DateTimeFormatterBuilder()
-            .append(STRICT_BASIC_WEEK_DATE_PRINTER).append(DateTimeFormatter.ofPattern("'T'HHmmssX", Locale.ROOT))
-            .toFormatter(Locale.ROOT),
-        new DateTimeFormatterBuilder()
-            .append(STRICT_BASIC_WEEK_DATE_FORMATTER).append(DateTimeFormatter.ofPattern("'T'HHmmssX", Locale.ROOT))
-            .toFormatter(Locale.ROOT)
+    private static final DateFormatter STRICT_BASIC_WEEK_DATE_TIME_NO_MILLIS =
+        new JavaDateFormatter("strict_basic_week_date_time_no_millis",
+            new DateTimeFormatterBuilder()
+                .append(STRICT_BASIC_WEEK_DATE_PRINTER).append(DateTimeFormatter.ofPattern("'T'HHmmssX", Locale.ROOT))
+                .toFormatter(Locale.ROOT),
+            new DateTimeFormatterBuilder()
+                .append(STRICT_BASIC_WEEK_DATE_FORMATTER).append(DateTimeFormatter.ofPattern("'T'HHmmssX", Locale.ROOT))
+                .toFormatter(Locale.ROOT)
     );
 
     /*
@@ -509,7 +510,9 @@ public class DateFormatters {
         new JavaDateFormatter("strict_hour_minute_second_millis",
             STRICT_HOUR_MINUTE_SECOND_MILLIS_PRINTER, STRICT_HOUR_MINUTE_SECOND_MILLIS_FORMATTER);
 
-    private static final DateFormatter STRICT_HOUR_MINUTE_SECOND_FRACTION = STRICT_HOUR_MINUTE_SECOND_MILLIS;
+    private static final DateFormatter STRICT_HOUR_MINUTE_SECOND_FRACTION =
+        new JavaDateFormatter("strict_hour_minute_second_fraction",
+            STRICT_HOUR_MINUTE_SECOND_MILLIS_PRINTER, STRICT_HOUR_MINUTE_SECOND_MILLIS_FORMATTER);
 
     /*
      * Returns a formatter that combines a full date, two digit hour of day,
@@ -533,7 +536,7 @@ public class DateFormatters {
     );
 
     private static final DateFormatter STRICT_DATE_HOUR_MINUTE_SECOND_MILLIS = new JavaDateFormatter(
-        "strict_date_hour_minute_second_fraction",
+        "strict_date_hour_minute_second_millis",
         new DateTimeFormatterBuilder()
             .append(STRICT_YEAR_MONTH_DAY_FORMATTER)
             .appendLiteral("T")
@@ -1497,12 +1500,12 @@ public class DateFormatters {
         } else if (Strings.hasLength(input) && input.contains("||")) {
             String[] formats = Strings.delimitedListToStringArray(input, "||");
             if (formats.length == 1) {
-                return forPattern(formats[0], locale);
+                return forPattern(formats[0], Locale.ROOT).withLocale(locale);
             } else {
                 try {
                     DateFormatter[] formatters = new DateFormatter[formats.length];
                     for (int i = 0; i < formats.length; i++) {
-                        formatters[i] = forPattern(formats[i], locale);
+                        formatters[i] = forPattern(formats[i], Locale.ROOT).withLocale(locale);
                     }
 
                     return DateFormatter.merge(formatters);

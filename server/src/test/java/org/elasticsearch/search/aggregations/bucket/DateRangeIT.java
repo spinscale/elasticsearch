@@ -18,7 +18,6 @@
  */
 package org.elasticsearch.search.aggregations.bucket;
 
-import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.action.index.IndexRequestBuilder;
 import org.elasticsearch.action.search.SearchPhaseExecutionException;
 import org.elasticsearch.action.search.SearchResponse;
@@ -976,9 +975,7 @@ public class DateRangeIT extends ESIntegTestCase {
         Exception e = expectThrows(Exception.class, () -> client().prepareSearch(indexName).setSize(0)
                 .addAggregation(dateRange("date_range").field("date").addRange(1000000, 3000000).addRange(3000000, 4000000)).get());
         Throwable cause = e.getCause();
-        assertThat(cause, instanceOf(ElasticsearchException.class));
-        Throwable throwable = ((ElasticsearchException) cause).unwrapCause();
-        assertThat(throwable.getMessage(),
+        assertThat(cause.getMessage(),
             containsString("could not parse input [1000000] with date formatter [strict_hour_minute_second]"));
     }
 

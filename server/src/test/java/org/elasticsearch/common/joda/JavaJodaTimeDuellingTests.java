@@ -520,8 +520,9 @@ public class JavaJodaTimeDuellingTests extends ESTestCase {
 
     public void testDateFormatterWithLocale() {
         Locale locale = randomLocale(random());
-        DateFormatter formatter = DateFormatters.forPattern("strict_date_optional_time||epoch_millis", locale);
-        assertThat(formatter.pattern(), is("strict_date_optional_time||epoch_millis"));
+        String pattern = randomBoolean() ? "strict_date_optional_time||epoch_millis" : "epoch_millis||strict_date_optional_time";
+        DateFormatter formatter = DateFormatters.forPattern(pattern, locale);
+        assertThat(formatter.pattern(), is(pattern));
         assertThat(formatter.getLocale(), is(locale));
     }
 
@@ -591,6 +592,7 @@ public class JavaJodaTimeDuellingTests extends ESTestCase {
     private void assertJavaTimeParseException(String input, String format) {
         DateFormatter javaTimeFormatter = DateFormatters.forPattern(format);
         ElasticsearchParseException e= expectThrows(ElasticsearchParseException.class, () -> javaTimeFormatter.parse(input));
-        assertThat(e.getMessage(), is("could not parse input [" + input + "] with date formatter [" + format+ "]"));
+        // using starts with because the message might contain a position in addition
+        assertThat(e.getMessage(), startsWith("could not parse input [" + input + "] with date formatter [" + format + "]"));
     }
 }
