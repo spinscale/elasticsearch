@@ -19,12 +19,8 @@
 
 package org.elasticsearch.common.joda;
 
-<<<<<<< HEAD
-import org.elasticsearch.common.time.DateFormatter;
-=======
 import org.elasticsearch.ElasticsearchParseException;
-import org.elasticsearch.common.time.CompoundDateTimeFormatter;
->>>>>>> make compound date time formatter return serializable exception
+import org.elasticsearch.common.time.DateFormatter;
 import org.elasticsearch.common.time.DateFormatters;
 import org.elasticsearch.test.ESTestCase;
 import org.joda.time.DateTime;
@@ -33,11 +29,13 @@ import org.joda.time.DateTimeZone;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.time.temporal.TemporalAccessor;
 import java.util.Locale;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.startsWith;
 
 public class JavaJodaTimeDuellingTests extends ESTestCase {
 
@@ -494,7 +492,7 @@ public class JavaJodaTimeDuellingTests extends ESTestCase {
     public void testSamePrinterOutputWithTimeZone() {
         String format = "strict_date_optional_time||epoch_millis";
         String dateInput = "2017-02-01T08:02:00.000-01:00";
-        CompoundDateTimeFormatter javaFormatter = DateFormatters.forPattern(format);
+        DateFormatter javaFormatter = DateFormatters.forPattern(format);
         TemporalAccessor javaDate = javaFormatter.parse(dateInput);
 
         FormatDateTimeFormatter jodaFormatter = Joda.forPattern(format);
@@ -522,8 +520,8 @@ public class JavaJodaTimeDuellingTests extends ESTestCase {
 
     public void testDateFormatterWithLocale() {
         Locale locale = randomLocale(random());
-        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("strict_date_optional_time||epoch_millis", locale);
-        assertThat(formatter.getFormatter(), is("strict_date_optional_time||epoch_millis"));
+        DateFormatter formatter = DateFormatters.forPattern("strict_date_optional_time||epoch_millis", locale);
+        assertThat(formatter.pattern(), is("strict_date_optional_time||epoch_millis"));
         assertThat(formatter.getLocale(), is(locale));
     }
 
@@ -563,7 +561,7 @@ public class JavaJodaTimeDuellingTests extends ESTestCase {
         FormatDateTimeFormatter jodaFormatter = Joda.forPattern(format, locale);
         DateTime jodaDateTime = jodaFormatter.parser().parseDateTime(input);
 
-        CompoundDateTimeFormatter javaTimeFormatter = DateFormatters.forPattern(format, locale);
+        DateFormatter javaTimeFormatter = DateFormatters.forPattern(format, locale);
         TemporalAccessor javaTimeAccessor = javaTimeFormatter.parse(input);
         ZonedDateTime zonedDateTime = DateFormatters.toZonedDateTime(javaTimeAccessor);
 
@@ -584,16 +582,15 @@ public class JavaJodaTimeDuellingTests extends ESTestCase {
         assertThat(e.getMessage(), containsString(expectedMessage));
     }
 
-<<<<<<< HEAD
     private void assertJavaTimeParseException(String input, String format, String expectedMessage) {
         DateFormatter javaTimeFormatter = DateFormatters.forPattern(format);
         DateTimeParseException dateTimeParseException = expectThrows(DateTimeParseException.class, () -> javaTimeFormatter.parse(input));
         assertThat(dateTimeParseException.getMessage(), startsWith(expectedMessage));
-=======
+    }
+
     private void assertJavaTimeParseException(String input, String format) {
-        CompoundDateTimeFormatter javaTimeFormatter = DateFormatters.forPattern(format);
+        DateFormatter javaTimeFormatter = DateFormatters.forPattern(format);
         ElasticsearchParseException e= expectThrows(ElasticsearchParseException.class, () -> javaTimeFormatter.parse(input));
         assertThat(e.getMessage(), is("could not parse input [" + input + "] with date formatter [" + format+ "]"));
->>>>>>> make compound date time formatter return serializable exception
     }
 }

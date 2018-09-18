@@ -24,6 +24,7 @@ import java.time.format.DateTimeParseException;
 import java.time.temporal.TemporalAccessor;
 import java.time.temporal.TemporalField;
 import java.util.Arrays;
+import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -61,6 +62,13 @@ public interface DateFormatter {
      * @return The name of this formatter
      */
     String pattern();
+
+    /**
+     * Returns the configured locale of the date formatter
+     *
+     * @return The locale of this formatter
+     */
+    Locale getLocale();
 
     /**
      * Configure a formatter using default fields for a TemporalAccessor that should be used in case
@@ -123,6 +131,11 @@ public interface DateFormatter {
         @Override
         public String pattern() {
             return format;
+        }
+
+        @Override
+        public Locale getLocale() {
+            return formatters[0].getLocale();
         }
 
         @Override

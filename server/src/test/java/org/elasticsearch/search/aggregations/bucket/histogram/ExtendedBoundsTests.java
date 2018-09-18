@@ -27,7 +27,7 @@ import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.joda.FormatDateTimeFormatter;
 import org.elasticsearch.common.joda.Joda;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.time.CompoundDateTimeFormatter;
+import org.elasticsearch.common.time.DateFormatter;
 import org.elasticsearch.common.time.DateFormatters;
 import org.elasticsearch.common.xcontent.ToXContent;
 import org.elasticsearch.common.xcontent.XContentBuilder;
@@ -105,8 +105,8 @@ public class ExtendedBoundsTests extends ESTestCase {
                 new IndexSettings(IndexMetaData.builder("foo").settings(indexSettings).build(), indexSettings), null, null, null, null,
                 null, xContentRegistry(), writableRegistry(), null, null, () -> now, null);
         when(context.getQueryShardContext()).thenReturn(qsc);
-        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("dateOptionalTime");
-        DocValueFormat format = new DocValueFormat.DateTime(formatter.getFormatter(), ZoneOffset.UTC);
+        DateFormatter formatter = DateFormatters.forPattern("dateOptionalTime");
+        DocValueFormat format = new DocValueFormat.DateTime(formatter.pattern(), ZoneOffset.UTC);
 
         ExtendedBounds expected = randomParsedExtendedBounds();
         ExtendedBounds parsed = unparsed(expected).parseAndValidate("test", context, format);

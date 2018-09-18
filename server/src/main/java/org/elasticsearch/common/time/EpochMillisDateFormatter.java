@@ -25,6 +25,7 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeParseException;
 import java.time.temporal.TemporalAccessor;
 import java.time.temporal.TemporalField;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -38,9 +39,13 @@ import java.util.Map;
  */
 class EpochMillisDateFormatter implements DateFormatter {
 
-    public static DateFormatter INSTANCE = new EpochMillisDateFormatter();
+    public static DateFormatter INSTANCE = new EpochMillisDateFormatter(Locale.ROOT);
 
-    private EpochMillisDateFormatter() {}
+    private final Locale locale;
+
+    private EpochMillisDateFormatter(Locale locale) {
+        this.locale = locale;
+    }
 
     @Override
     public TemporalAccessor parse(String input) {
@@ -64,6 +69,11 @@ class EpochMillisDateFormatter implements DateFormatter {
     @Override
     public String pattern() {
         return "epoch_millis";
+    }
+
+    @Override
+    public Locale getLocale() {
+        return locale;
     }
 
     @Override

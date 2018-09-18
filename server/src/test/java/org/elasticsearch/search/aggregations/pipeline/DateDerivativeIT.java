@@ -21,7 +21,7 @@ package org.elasticsearch.search.aggregations.pipeline;
 
 import org.elasticsearch.action.index.IndexRequestBuilder;
 import org.elasticsearch.action.search.SearchResponse;
-import org.elasticsearch.common.time.CompoundDateTimeFormatter;
+import org.elasticsearch.common.time.DateFormatter;
 import org.elasticsearch.common.time.DateFormatters;
 import org.elasticsearch.index.mapper.DateFieldMapper;
 import org.elasticsearch.search.aggregations.InternalAggregation;
@@ -209,7 +209,7 @@ public class DateDerivativeIT extends ESIntegTestCase {
         List<IndexRequestBuilder> builders = new ArrayList<>();
 
         ZoneId timezone = ZoneId.of("CET");
-        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(timezone);
+        DateFormatter formatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(timezone);
         // epoch millis: 1332547200000
         addNTimes(1, IDX_DST_START, DateFormatters.toZonedDateTime(formatter.parse("2012-03-24T01:00:00")), builders);
         // day with dst shift, only 23h long
@@ -235,7 +235,7 @@ public class DateDerivativeIT extends ESIntegTestCase {
         List<? extends Bucket> buckets = deriv.getBuckets();
         assertThat(buckets.size(), equalTo(4));
 
-        CompoundDateTimeFormatter dateFormatter = DateFormatters.forPattern("yyyy-MM-dd");
+        DateFormatter dateFormatter = DateFormatters.forPattern("yyyy-MM-dd");
         ZonedDateTime expectedKeyFirstBucket =
             LocalDate.from(dateFormatter.parse("2012-03-24")).atStartOfDay(timezone).withZoneSameInstant(ZoneOffset.UTC);
         assertBucket(buckets.get(0), expectedKeyFirstBucket, 1L, nullValue(), null, null);
@@ -262,7 +262,7 @@ public class DateDerivativeIT extends ESIntegTestCase {
         ZoneId timezone = ZoneId.of("CET");
         List<IndexRequestBuilder> builders = new ArrayList<>();
 
-        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(timezone);
+        DateFormatter formatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(timezone);
         addNTimes(1, IDX_DST_END, DateFormatters.toZonedDateTime(formatter.parse("2012-10-27T01:00:00")), builders);
         // day with dst shift -1h, 25h long
         addNTimes(2, IDX_DST_END, DateFormatters.toZonedDateTime(formatter.parse("2012-10-28T01:00:00")), builders);
@@ -287,7 +287,7 @@ public class DateDerivativeIT extends ESIntegTestCase {
         List<? extends Bucket> buckets = deriv.getBuckets();
         assertThat(buckets.size(), equalTo(4));
 
-        CompoundDateTimeFormatter dateFormatter = DateFormatters.forPattern("yyyy-MM-dd").withZone(ZoneOffset.UTC);
+        DateFormatter dateFormatter = DateFormatters.forPattern("yyyy-MM-dd").withZone(ZoneOffset.UTC);
 
         ZonedDateTime expectedKeyFirstBucket =
             LocalDate.from(dateFormatter.parse("2012-10-27")).atStartOfDay(timezone).withZoneSameInstant(ZoneOffset.UTC);
@@ -318,7 +318,7 @@ public class DateDerivativeIT extends ESIntegTestCase {
         ZoneId timezone = ZoneId.of("Asia/Kathmandu");
         List<IndexRequestBuilder> builders = new ArrayList<>();
 
-        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(timezone);
+        DateFormatter formatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(timezone);
         addNTimes(1, IDX_DST_KATHMANDU, DateFormatters.toZonedDateTime(formatter.parse("1985-12-31T22:30:00")), builders);
         // the shift happens during the next bucket, which includes the 45min that do not start on the full hour
         addNTimes(2, IDX_DST_KATHMANDU, DateFormatters.toZonedDateTime(formatter.parse("1985-12-31T23:30:00")), builders);
@@ -343,7 +343,7 @@ public class DateDerivativeIT extends ESIntegTestCase {
         List<? extends Bucket> buckets = deriv.getBuckets();
         assertThat(buckets.size(), equalTo(4));
 
-        CompoundDateTimeFormatter dateFormatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
+        DateFormatter dateFormatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
         ZonedDateTime expectedKeyFirstBucket =
             LocalDateTime.from(dateFormatter.parse("1985-12-31T22:00:00")).atZone(timezone).withZoneSameInstant(ZoneOffset.UTC);

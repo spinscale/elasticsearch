@@ -65,7 +65,7 @@ public class DocValueFormatTests extends ESTestCase {
         in = new NamedWriteableAwareStreamInput(out.bytes().streamInput(), registry);
         vf = in.readNamedWriteable(DocValueFormat.class);
         assertEquals(DocValueFormat.DateTime.class, vf.getClass());
-        assertEquals("epoch_second", ((DocValueFormat.DateTime) vf).formatter.getFormatter());
+        assertEquals("epoch_second", ((DocValueFormat.DateTime) vf).formatter.pattern());
         assertEquals(ZoneOffset.ofHours(1), ((DocValueFormat.DateTime) vf).timeZone);
 
         out = new BytesStreamOutput();

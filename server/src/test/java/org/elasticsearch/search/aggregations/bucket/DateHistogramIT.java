@@ -24,7 +24,7 @@ import org.elasticsearch.action.search.SearchPhaseExecutionException;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.time.CompoundDateTimeFormatter;
+import org.elasticsearch.common.time.DateFormatter;
 import org.elasticsearch.common.time.DateFormatters;
 import org.elasticsearch.common.time.DateMathParser;
 import org.elasticsearch.common.xcontent.XContentType;
@@ -1184,7 +1184,7 @@ public class DateHistogramIT extends ESIntegTestCase {
                 .execute().actionGet();
 
         List<IndexRequestBuilder> builders = new ArrayList<>();
-        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("date_optional_time");
+        DateFormatter formatter = DateFormatters.forPattern("date_optional_time");
         builders.add(indexDoc(index, DateFormatters.toZonedDateTime(formatter.parse("2016-01-03T08:00:00.000Z")), 1));
         builders.add(indexDoc(index, DateFormatters.toZonedDateTime(formatter.parse("2016-01-03T08:00:00.000Z")), 2));
         builders.add(indexDoc(index, DateFormatters.toZonedDateTime(formatter.parse("2016-01-06T08:00:00.000Z")), 3));

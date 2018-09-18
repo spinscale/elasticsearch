@@ -21,7 +21,7 @@ package org.elasticsearch.index.mapper;
 
 import org.apache.lucene.index.IndexOptions;
 import org.elasticsearch.ElasticsearchParseException;
-import org.elasticsearch.common.time.CompoundDateTimeFormatter;
+import org.elasticsearch.common.time.DateFormatter;
 import org.elasticsearch.common.time.DateFormatters;
 import org.elasticsearch.common.xcontent.support.XContentMapValues;
 import org.elasticsearch.index.analysis.NamedAnalyzer;
@@ -263,7 +263,7 @@ public class TypeParsers {
         }
     }
 
-    public static CompoundDateTimeFormatter parseDateTimeFormatter(Object node) {
+    public static DateFormatter parseDateTimeFormatter(Object node) {
         if (node instanceof String) {
             return DateFormatters.forPattern(node.toString());
         }

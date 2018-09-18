@@ -35,6 +35,7 @@ import java.util.Objects;
 class JavaDateFormatter implements DateFormatter {
 
     private final String format;
+    private final Locale locale;
     private final DateTimeFormatter printer;
     private final DateTimeFormatter[] parsers;
 
@@ -54,6 +55,7 @@ class JavaDateFormatter implements DateFormatter {
         } else {
             this.parsers = parsers;
         }
+        this.locale = parsers[0].getLocale();
     }
 
     @Override
@@ -64,9 +66,8 @@ class JavaDateFormatter implements DateFormatter {
                 return parsers[i].parse(input);
             } catch (DateTimeParseException e) {
                 if (failure == null) {
-                    // TODO mention locale
                     failure = new ElasticsearchParseException("could not parse input [" + input +
-                        "] with date formatter [" + format + "]");
+                        "] with date formatter [" + format + "] and locale [" + locale +"]");
                 }
                 failure.addSuppressed(e);
             }
@@ -100,6 +101,11 @@ class JavaDateFormatter implements DateFormatter {
         return format;
     }
 
+    @Override
+    public Locale getLocale() {
+        return parsers[0].getLocale();
+    }
+
     public DateFormatter parseDefaulting(Map<TemporalField, Long> fields) {
         final DateTimeFormatterBuilder parseDefaultingBuilder = new DateTimeFormatterBuilder().append(printer);
         fields.forEach(parseDefaultingBuilder::parseDefaulting);
@@ -118,8 +124,7 @@ class JavaDateFormatter implements DateFormatter {
 
     @Override
     public int hashCode() {
-        // TODO add locale, remove printer, parsers?
-        return Objects.hash(printer, format, Arrays.hashCode(parsers));
+        return Objects.hash(printer, locale, format, Arrays.hashCode(parsers));
     }
 
     @Override
@@ -129,8 +134,8 @@ class JavaDateFormatter implements DateFormatter {
         }
         JavaDateFormatter other = (JavaDateFormatter) obj;
 
-        // TODO add locale, remove printer parsers?
         return Objects.equals(format, other.format) &&
+               Objects.equals(locale, other.locale) &&
                Objects.equals(printer, other.printer) &&
                Arrays.equals(parsers, other.parsers);
     }

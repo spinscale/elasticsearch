@@ -36,7 +36,7 @@ import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.common.geo.ShapeRelation;
 import org.elasticsearch.common.network.InetAddresses;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.time.CompoundDateTimeFormatter;
+import org.elasticsearch.common.time.DateFormatter;
 import org.elasticsearch.common.time.DateFormatters;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.mapper.RangeFieldMapper.RangeFieldType;
@@ -123,7 +123,7 @@ public class RangeFieldTypeTests extends FieldTypeTestCase {
         assertThat(ex.getMessage(), containsString("could not parse input [2016-15-06T15:29:50+08:00]"));
 
         // setting mapping format which is compatible with those dates
-        final CompoundDateTimeFormatter formatter = DateFormatters.forPattern("yyyy-dd-MM'T'HH:mm:ssZZZZZ");
+        final DateFormatter formatter = DateFormatters.forPattern("yyyy-dd-MM'T'HH:mm:ssZZZZZ");
         assertEquals(1465975790000L, DateFormatters.toZonedDateTime(formatter.parse(from)).toInstant().toEpochMilli());
         assertEquals(1466062190000L, DateFormatters.toZonedDateTime(formatter.parse(to)).toInstant().toEpochMilli());
 

@@ -20,7 +20,7 @@ package org.elasticsearch.search.aggregations.bucket;
 
 import org.elasticsearch.action.index.IndexRequestBuilder;
 import org.elasticsearch.action.search.SearchResponse;
-import org.elasticsearch.common.time.CompoundDateTimeFormatter;
+import org.elasticsearch.common.time.DateFormatter;
 import org.elasticsearch.common.time.DateFormatters;
 import org.elasticsearch.index.mapper.DateFieldMapper;
 import org.elasticsearch.search.aggregations.bucket.histogram.DateHistogramInterval;
@@ -51,7 +51,7 @@ import static org.hamcrest.core.IsNull.notNullValue;
 public class DateHistogramOffsetIT extends ESIntegTestCase {
 
     private static final String DATE_FORMAT = "yyyy-MM-dd:hh-mm-ss";
-    private static final CompoundDateTimeFormatter FORMATTER = DateFormatters.forPattern(DATE_FORMAT);
+    private static final DateFormatter FORMATTER = DateFormatters.forPattern(DATE_FORMAT);
 
     private ZonedDateTime date(String date) {
         return DateFormatters.toZonedDateTime(DateFieldMapper.DEFAULT_DATE_TIME_FORMATTER.parse(date));

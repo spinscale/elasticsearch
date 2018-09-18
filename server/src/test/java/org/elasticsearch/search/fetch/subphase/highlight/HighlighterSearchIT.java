@@ -34,7 +34,7 @@ import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.geo.GeoPoint;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.settings.Settings.Builder;
-import org.elasticsearch.common.time.CompoundDateTimeFormatter;
+import org.elasticsearch.common.time.DateFormatter;
 import org.elasticsearch.common.time.DateFormatters;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
@@ -2968,7 +2968,7 @@ public class HighlighterSearchIT extends ESIntegTestCase {
             .setSettings(Settings.builder().put("index.number_of_replicas", 0).put("index.number_of_shards", 2))
             .get());
         ZonedDateTime now = ZonedDateTime.now(ZoneOffset.UTC);
-        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("strict_date_optional_time");
+        DateFormatter formatter = DateFormatters.forPattern("strict_date_optional_time");
         indexRandom(true,
             client().prepareIndex("index-1", "type", "1").setSource("d", formatter.format(now), "field", "hello world"),
             client().prepareIndex("index-1", "type", "2").setSource("d", formatter.format(now.minusDays(1)), "field", "hello"),

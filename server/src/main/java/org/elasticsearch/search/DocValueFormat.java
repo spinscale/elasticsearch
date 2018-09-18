@@ -27,7 +27,7 @@ import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.network.InetAddresses;
 import org.elasticsearch.common.network.NetworkAddress;
-import org.elasticsearch.common.time.CompoundDateTimeFormatter;
+import org.elasticsearch.common.time.DateFormatter;
 import org.elasticsearch.common.time.DateFormatters;
 import org.elasticsearch.common.time.DateMathParser;
 
@@ -172,7 +172,7 @@ public interface DocValueFormat extends NamedWriteable {
         public static final String NAME = "date_time";
 
         final String format;
-        final CompoundDateTimeFormatter formatter;
+        final DateFormatter formatter;
         final ZoneId timeZone;
         private final DateMathParser parser;
 

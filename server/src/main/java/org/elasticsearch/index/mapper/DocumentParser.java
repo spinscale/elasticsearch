@@ -25,7 +25,7 @@ import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.Version;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.collect.Tuple;
-import org.elasticsearch.common.time.CompoundDateTimeFormatter;
+import org.elasticsearch.common.time.DateFormatter;
 import org.elasticsearch.common.xcontent.LoggingDeprecationHandler;
 import org.elasticsearch.common.xcontent.XContentHelper;
 import org.elasticsearch.common.xcontent.XContentParser;
@@ -664,10 +664,10 @@ final class DocumentParser {
         return new NumberFieldMapper.Builder(name, NumberFieldMapper.NumberType.FLOAT);
     }
 
-    private static Mapper.Builder<?, ?> newDateBuilder(String name, CompoundDateTimeFormatter dateTimeFormatter, Version indexCreated) {
+    private static Mapper.Builder<?, ?> newDateBuilder(String name, DateFormatter dateTimeFormatter, Version indexCreated) {
         DateFieldMapper.Builder builder = new DateFieldMapper.Builder(name);
         if (dateTimeFormatter != null) {
-            builder.format(dateTimeFormatter.getFormatter()).locale(dateTimeFormatter.getLocale());
+            builder.format(dateTimeFormatter.pattern()).locale(dateTimeFormatter.getLocale());
         }
         return builder;
     }
@@ -708,7 +708,7 @@ final class DocumentParser {
                 // We refuse to match pure numbers, which are too likely to be
                 // false positives with date formats that include eg.
                 // `epoch_millis` or `YYYY`
-                for (CompoundDateTimeFormatter dateTimeFormatter : context.root().dynamicDateTimeFormatters()) {
+                for (DateFormatter dateTimeFormatter : context.root().dynamicDateTimeFormatters()) {
                     try {
                         dateTimeFormatter.parse(text);
                     } catch (ElasticsearchParseException e) {
@@ -722,7 +722,7 @@ final class DocumentParser {
                     if (builder instanceof DateFieldMapper.Builder) {
                         DateFieldMapper.Builder dateBuilder = (DateFieldMapper.Builder) builder;
                         if (dateBuilder.isFormatterSet() == false) {
-                            dateBuilder.format(dateTimeFormatter.getFormatter()).locale(dateTimeFormatter.getLocale());
+                            dateBuilder.format(dateTimeFormatter.pattern()).locale(dateTimeFormatter.getLocale());
                         }
                     }
                     return builder;

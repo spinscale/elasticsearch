@@ -33,7 +33,7 @@ import org.apache.lucene.store.Directory;
 import org.elasticsearch.Version;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.time.CompoundDateTimeFormatter;
+import org.elasticsearch.common.time.DateFormatter;
 import org.elasticsearch.common.time.DateFormatters;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.mapper.DateFieldMapper;
@@ -638,7 +638,7 @@ public class AutoDateHistogramAggregatorTests extends AggregatorTestCase {
     }
 
     public void testAllSecondIntervals() throws IOException {
-        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
+        DateFormatter formatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
         List<String> dataset = new ArrayList<>();
         ZonedDateTime startDate = ZonedDateTime.of(2017, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         for (int i = 0; i < 600; i++) {
@@ -705,7 +705,7 @@ public class AutoDateHistogramAggregatorTests extends AggregatorTestCase {
     }
 
     public void testAllMinuteIntervals() throws IOException {
-        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
+        DateFormatter formatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
         List<String> dataset = new ArrayList<>();
         ZonedDateTime startDate = ZonedDateTime.of(2017, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         for (int i = 0; i < 600; i++) {
@@ -770,7 +770,7 @@ public class AutoDateHistogramAggregatorTests extends AggregatorTestCase {
     }
 
     public void testAllHourIntervals() throws IOException {
-        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
+        DateFormatter formatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
         List<String> dataset = new ArrayList<>();
         ZonedDateTime startDate = ZonedDateTime.of(2017, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         for (int i = 0; i < 600; i++) {
@@ -824,7 +824,7 @@ public class AutoDateHistogramAggregatorTests extends AggregatorTestCase {
     }
 
     public void testAllDayIntervals() throws IOException {
-        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
+        DateFormatter formatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
         List<String> dataset = new ArrayList<>();
         ZonedDateTime startDate = ZonedDateTime.of(2017, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         for (int i = 0; i < 700; i++) {
@@ -867,7 +867,7 @@ public class AutoDateHistogramAggregatorTests extends AggregatorTestCase {
     }
 
     public void testAllMonthIntervals() throws IOException {
-        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
+        DateFormatter formatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
         List<String> dataset = new ArrayList<>();
         ZonedDateTime startDate = ZonedDateTime.of(2017, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         for (int i = 0; i < 600; i++) {
@@ -910,7 +910,7 @@ public class AutoDateHistogramAggregatorTests extends AggregatorTestCase {
     }
 
     public void testAllYearIntervals() throws IOException {
-        CompoundDateTimeFormatter formatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
+        DateFormatter formatter = DateFormatters.forPattern("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
         List<String> dataset = new ArrayList<>();
         ZonedDateTime startDate = ZonedDateTime.of(2017, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC);
         for (int i = 0; i < 600; i++) {

@@ -48,7 +48,7 @@ import org.elasticsearch.common.geo.ShapeRelation;
 import org.elasticsearch.common.network.InetAddresses;
 import org.elasticsearch.common.settings.Setting;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.time.CompoundDateTimeFormatter;
+import org.elasticsearch.common.time.DateFormatter;
 import org.elasticsearch.common.time.DateFormatters;
 import org.elasticsearch.common.time.DateMathParser;
 import org.elasticsearch.common.util.LocaleUtils;
@@ -145,10 +145,10 @@ public class RangeFieldMapper extends FieldMapper {
         @Override
         protected void setupFieldType(BuilderContext context) {
             super.setupFieldType(context);
-            CompoundDateTimeFormatter dateTimeFormatter = fieldType().dateTimeFormatter;
+            DateFormatter dateTimeFormatter = fieldType().dateTimeFormatter;
             if (fieldType().rangeType == RangeType.DATE) {
                 if (Strings.hasLength(builder.format) &&
-                    Objects.equals(builder.format, fieldType().dateTimeFormatter().getFormatter()) == false ||
+                    Objects.equals(builder.format, fieldType().dateTimeFormatter().pattern()) == false ||
                     Objects.equals(builder.locale, fieldType().dateTimeFormatter().getLocale()) == false) {
                     fieldType().setDateTimeFormatter(DateFormatters.forPattern(format, locale));
                 }
@@ -204,7 +204,7 @@ public class RangeFieldMapper extends FieldMapper {
 
     public static final class RangeFieldType extends MappedFieldType {
         protected RangeType rangeType;
-        protected CompoundDateTimeFormatter dateTimeFormatter;
+        protected DateFormatter dateTimeFormatter;
         protected DateMathParser dateMathParser;
 
         RangeFieldType(RangeType type) {
@@ -251,11 +251,11 @@ public class RangeFieldMapper extends FieldMapper {
             return rangeType.name;
         }
 
-        public CompoundDateTimeFormatter dateTimeFormatter() {
+        public DateFormatter dateTimeFormatter() {
             return dateTimeFormatter;
         }
 
-        public void setDateTimeFormatter(CompoundDateTimeFormatter dateTimeFormatter) {
+        public void setDateTimeFormatter(DateFormatter dateTimeFormatter) {
             checkIfFrozen();
             this.dateTimeFormatter = dateTimeFormatter;
             this.dateMathParser = new DateMathParser(dateTimeFormatter);
@@ -405,9 +405,9 @@ public class RangeFieldMapper extends FieldMapper {
 
         if (fieldType().rangeType == RangeType.DATE
                 && (includeDefaults || (fieldType().dateTimeFormatter() != null
-                && fieldType().dateTimeFormatter().getFormatter()
-                        .equals(DateFieldMapper.DEFAULT_COMPOUND_DATE_TIME_FORMATTER.getFormatter()) == false))) {
-            builder.field("format", fieldType().dateTimeFormatter.getFormatter());
+                && fieldType().dateTimeFormatter().pattern()
+                        .equals(DateFieldMapper.DEFAULT_COMPOUND_DATE_TIME_FORMATTER.pattern()) == false))) {
+            builder.field("format", fieldType().dateTimeFormatter.pattern());
         }
         if (fieldType().rangeType == RangeType.DATE
                 && (includeDefaults || (fieldType().dateTimeFormatter() != null
