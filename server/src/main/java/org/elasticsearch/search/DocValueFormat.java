@@ -30,6 +30,7 @@ import org.elasticsearch.common.network.NetworkAddress;
 import org.elasticsearch.common.time.DateFormatter;
 import org.elasticsearch.common.time.DateFormatters;
 import org.elasticsearch.common.time.DateMathParser;
+import org.joda.time.DateTimeZone;
 
 import java.io.IOException;
 import java.net.InetAddress;
@@ -195,7 +196,8 @@ public interface DocValueFormat extends NamedWriteable {
         @Override
         public void writeTo(StreamOutput out) throws IOException {
             out.writeString(format);
-            out.writeString(timeZone.getId());
+            // joda does not understand "Z" for utc, so we must special case
+            out.writeString(timeZone.getId().equals("Z") ? DateTimeZone.UTC.getID() : timeZone.getId());
         }
 
         @Override
