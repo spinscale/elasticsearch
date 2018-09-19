@@ -81,7 +81,7 @@ public class DateHistogramGroupConfig implements Writeable, ToXContentObject {
      *     The {@code field} and {@code interval} are required to compute the date histogram for the rolled up documents.
      *     The {@code delay} is optional and can be set to {@code null}. It defines how long to wait before rolling up new documents.
      *     The {@code timeZone} is optional and can be set to {@code null}. When configured, the time zone value  is resolved using
-     *     ({@link ZoneId#of(String)} and must match a time zone identifier provided by the Joda Time library.
+     *     ({@link ZoneId#of(String)} and must match a time zone identifier.
      * </p>
      * @param field the name of the date field to use for the date histogram (required)
      * @param interval the interval to use for the date histogram (required)

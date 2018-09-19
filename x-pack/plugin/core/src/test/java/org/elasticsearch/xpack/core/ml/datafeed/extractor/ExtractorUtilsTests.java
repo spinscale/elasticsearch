@@ -72,7 +72,7 @@ public class ExtractorUtilsTests extends ESTestCase {
     public void testGetHistogramIntervalMillis_GivenDateHistogramWithInvalidTimeZone() {
         MaxAggregationBuilder maxTime = AggregationBuilders.max("time").field("time");
         DateHistogramAggregationBuilder dateHistogram = AggregationBuilders.dateHistogram("bucket").field("time")
-                .interval(300000L).timeZone(ZoneId.of("EST")).subAggregation(maxTime);
+                .interval(300000L).timeZone(ZoneId.of("CET")).subAggregation(maxTime);
         ElasticsearchException e = expectThrows(ElasticsearchException.class,
                 () -> ExtractorUtils.getHistogramIntervalMillis(dateHistogram));
 
