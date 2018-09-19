@@ -654,6 +654,13 @@ public abstract class StreamInput extends InputStream {
     }
 
     /**
+     * Read a {@linkplain DateTimeZone}.
+     */
+    public ZoneId readZoneId() throws IOException {
+        return ZoneId.of(readString());
+    }
+
+    /**
      * Read an optional {@linkplain ZoneId}.
      */
     public ZoneId readOptionalZoneId() throws IOException {
