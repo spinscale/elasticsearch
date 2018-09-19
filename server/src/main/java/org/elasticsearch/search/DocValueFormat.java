@@ -186,6 +186,10 @@ public interface DocValueFormat extends NamedWriteable {
         public DateTime(StreamInput in) throws IOException {
             this.formatter = DateFormatters.forPattern(in.readString());
             this.parser = new DateMathParser(formatter);
+            // calling ZoneId.of("UTC) will produce "UTC" as timezone in the formatter
+            // calling ZoneOffset.UTC will produce "Z" as timezone in the formatter
+            // as returning a date having UTC is always returning Z as timezone in all
+            // versions, this is a hack around the java time behaviour
             String zoneId = in.readString();
             this.timeZone = zoneId.equals("UTC") ? ZoneOffset.UTC : ZoneId.of(zoneId);
         }

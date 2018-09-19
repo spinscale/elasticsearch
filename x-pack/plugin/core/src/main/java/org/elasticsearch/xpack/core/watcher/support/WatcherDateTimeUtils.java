@@ -15,7 +15,6 @@ import org.elasticsearch.common.joda.Joda;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentParser;
-import org.elasticsearch.index.mapper.DateFieldMapper;
 import org.joda.time.DateTime;
 import org.joda.time.DateTimeZone;
 
