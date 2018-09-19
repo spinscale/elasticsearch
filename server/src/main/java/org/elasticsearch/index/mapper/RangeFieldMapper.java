@@ -406,7 +406,7 @@ public class RangeFieldMapper extends FieldMapper {
         if (fieldType().rangeType == RangeType.DATE
                 && (includeDefaults || (fieldType().dateTimeFormatter() != null
                 && fieldType().dateTimeFormatter().pattern()
-                        .equals(DateFieldMapper.DEFAULT_COMPOUND_DATE_TIME_FORMATTER.pattern()) == false))) {
+                        .equals(DateFieldMapper.DEFAULT_DATE_TIME_FORMATTER.pattern()) == false))) {
             builder.field("format", fieldType().dateTimeFormatter.pattern());
         }
         if (fieldType().rangeType == RangeType.DATE
@@ -592,7 +592,7 @@ public class RangeFieldMapper extends FieldMapper {
                                     @Nullable DateMathParser parser, QueryShardContext context) {
                 ZoneId zone = (timeZone == null) ? ZoneOffset.UTC : timeZone;
                 DateMathParser dateMathParser = (parser == null) ?
-                    new DateMathParser(DateFieldMapper.DEFAULT_COMPOUND_DATE_TIME_FORMATTER) : parser;
+                    new DateMathParser(DateFieldMapper.DEFAULT_DATE_TIME_FORMATTER) : parser;
                 Long low = lowerTerm == null ? Long.MIN_VALUE :
                     dateMathParser.parse(lowerTerm instanceof BytesRef ? ((BytesRef) lowerTerm).utf8ToString() : lowerTerm.toString(),
                         context::nowInMillis, false, zone).toEpochMilli();

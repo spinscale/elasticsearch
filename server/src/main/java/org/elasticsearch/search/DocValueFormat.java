@@ -172,20 +172,18 @@ public interface DocValueFormat extends NamedWriteable {
 
         public static final String NAME = "date_time";
 
-        final String format;
         final DateFormatter formatter;
         final ZoneId timeZone;
         private final DateMathParser parser;
 
-        public DateTime(String format, ZoneId timeZone) {
-            this.format = Objects.requireNonNull(format);
-            this.formatter = DateFormatters.forPattern(this.format);
+        public DateTime(DateFormatter formatter, ZoneId timeZone) {
+            this.formatter = formatter;
             this.timeZone = Objects.requireNonNull(timeZone);
             this.parser = new DateMathParser(formatter);
         }
 
         public DateTime(StreamInput in) throws IOException {
-            this(in.readString(), ZoneId.of(in.readString()));
+            this(DateFormatters.forPattern(in.readString()), ZoneId.of(in.readString()));
         }
 
         @Override
@@ -195,7 +193,7 @@ public interface DocValueFormat extends NamedWriteable {
 
         @Override
         public void writeTo(StreamOutput out) throws IOException {
-            out.writeString(format);
+            out.writeString(formatter.pattern());
             // joda does not understand "Z" for utc, so we must special case
             out.writeString(timeZone.getId().equals("Z") ? DateTimeZone.UTC.getID() : timeZone.getId());
         }

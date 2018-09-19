@@ -66,11 +66,8 @@ import java.util.Objects;
 public class DateFieldMapper extends FieldMapper {
 
     public static final String CONTENT_TYPE = "date";
-    public static final String DEFAULT_COMPOUND_DATE_TIME_FORMATTER_STRING = "strict_date_optional_time||epoch_millis";
-    public static final DateFormatter DEFAULT_COMPOUND_DATE_TIME_FORMATTER =
-        DateFormatters.forPattern(DEFAULT_COMPOUND_DATE_TIME_FORMATTER_STRING);
-    public static final DateFormatter DEFAULT_DATE_TIME_FORMATTER =
-        DateFormatters.forPattern(DEFAULT_COMPOUND_DATE_TIME_FORMATTER_STRING);
+    public static final String DEFAULT_DATE_FORMATTER_STRING = "strict_date_optional_time||epoch_millis";
+    public static final DateFormatter DEFAULT_DATE_TIME_FORMATTER = DateFormatters.forPattern(DEFAULT_DATE_FORMATTER_STRING);
 
     public static class Defaults {
         public static final Explicit<Boolean> IGNORE_MALFORMED = new Explicit<>(false, false);
@@ -79,7 +76,7 @@ public class DateFieldMapper extends FieldMapper {
     public static class Builder extends FieldMapper.Builder<Builder, DateFieldMapper> {
 
         private Boolean ignoreMalformed;
-        private Explicit<String> format = new Explicit<>(DEFAULT_COMPOUND_DATE_TIME_FORMATTER.pattern(), false);
+        private Explicit<String> format = new Explicit<>(DEFAULT_DATE_TIME_FORMATTER.pattern(), false);
         private Locale locale;
 
         public Builder(String name) {
@@ -193,7 +190,7 @@ public class DateFieldMapper extends FieldMapper {
             setTokenized(false);
             setHasDocValues(true);
             setOmitNorms(true);
-            setDateTimeFormatter(DEFAULT_COMPOUND_DATE_TIME_FORMATTER);
+            setDateTimeFormatter(DEFAULT_DATE_TIME_FORMATTER);
         }
 
         DateFieldType(DateFieldType other) {
@@ -397,7 +394,7 @@ public class DateFieldMapper extends FieldMapper {
             if (timeZone == null) {
                 timeZone = ZoneOffset.UTC;
             }
-            return new DocValueFormat.DateTime(dateTimeFormatter.pattern(), timeZone);
+            return new DocValueFormat.DateTime(dateTimeFormatter, timeZone);
         }
     }
 
@@ -499,11 +496,11 @@ public class DateFieldMapper extends FieldMapper {
         }
 
         if (includeDefaults
-                || fieldType().dateTimeFormatter().pattern().equals(DEFAULT_COMPOUND_DATE_TIME_FORMATTER.pattern()) == false) {
+                || fieldType().dateTimeFormatter().pattern().equals(DEFAULT_DATE_TIME_FORMATTER.pattern()) == false) {
             builder.field("format", fieldType().dateTimeFormatter().pattern());
         }
         if (includeDefaults
-            || fieldType().dateTimeFormatter().getLocale().equals(DEFAULT_COMPOUND_DATE_TIME_FORMATTER.getLocale()) == false) {
+            || fieldType().dateTimeFormatter().getLocale().equals(DEFAULT_DATE_TIME_FORMATTER.getLocale()) == false) {
             builder.field("locale", fieldType().dateTimeFormatter().getLocale());
         }
     }

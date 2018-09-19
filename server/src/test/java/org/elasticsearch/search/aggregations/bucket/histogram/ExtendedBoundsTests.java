@@ -106,7 +106,7 @@ public class ExtendedBoundsTests extends ESTestCase {
                 null, xContentRegistry(), writableRegistry(), null, null, () -> now, null);
         when(context.getQueryShardContext()).thenReturn(qsc);
         DateFormatter formatter = DateFormatters.forPattern("dateOptionalTime");
-        DocValueFormat format = new DocValueFormat.DateTime(formatter.pattern(), ZoneOffset.UTC);
+        DocValueFormat format = new DocValueFormat.DateTime(formatter, ZoneOffset.UTC);
 
         ExtendedBounds expected = randomParsedExtendedBounds();
         ExtendedBounds parsed = unparsed(expected).parseAndValidate("test", context, format);
