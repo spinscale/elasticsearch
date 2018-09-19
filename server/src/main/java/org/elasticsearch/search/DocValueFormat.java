@@ -40,6 +40,7 @@ import java.text.NumberFormat;
 import java.text.ParseException;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Locale;
@@ -183,7 +184,10 @@ public interface DocValueFormat extends NamedWriteable {
         }
 
         public DateTime(StreamInput in) throws IOException {
-            this(DateFormatters.forPattern(in.readString()), ZoneId.of(in.readString()));
+            this.formatter = DateFormatters.forPattern(in.readString());
+            this.parser = new DateMathParser(formatter);
+            String zoneId = in.readString();
+            this.timeZone = zoneId.equals("UTC") ? ZoneOffset.UTC : ZoneId.of(zoneId);
         }
 
         @Override
