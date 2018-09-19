@@ -118,13 +118,6 @@ public class DateFormatters {
         .optionalEnd()
         .toFormatter(Locale.ROOT);
 
-    /**
-     * Returns a generic ISO datetime parser where the date is mandatory and the time is optional.
-     */
-    private static final DateFormatter STRICT_DATE_OPTIONAL_TIME =
-        new JavaDateFormatter("strict_date_optional_time", STRICT_DATE_OPTIONAL_TIME_FORMATTER_1,
-            STRICT_DATE_OPTIONAL_TIME_FORMATTER_1, STRICT_DATE_OPTIONAL_TIME_FORMATTER_2);
-
     private static final DateTimeFormatter STRICT_DATE_OPTIONAL_TIME_FORMATTER_WITH_NANOS_1 = new DateTimeFormatterBuilder()
         .append(STRICT_YEAR_MONTH_DAY_FORMATTER)
         .optionalStart()
@@ -159,6 +152,14 @@ public class DateFormatters {
     private static final DateFormatter STRICT_DATE_OPTIONAL_TIME_NANOS = new JavaDateFormatter("strict_date_optional_time_nanos",
         STRICT_DATE_OPTIONAL_TIME_FORMATTER_WITH_NANOS_1,
         STRICT_DATE_OPTIONAL_TIME_FORMATTER_WITH_NANOS_1, STRICT_DATE_OPTIONAL_TIME_FORMATTER_WITH_NANOS_2);
+
+    /**
+     * Returns a generic ISO datetime parser where the date is mandatory and the time is optional.
+     */
+    private static final DateFormatter STRICT_DATE_OPTIONAL_TIME =
+        new JavaDateFormatter("strict_date_optional_time", STRICT_DATE_OPTIONAL_TIME_FORMATTER_1,
+            STRICT_DATE_OPTIONAL_TIME_FORMATTER_1, STRICT_DATE_OPTIONAL_TIME_FORMATTER_2,
+            STRICT_DATE_OPTIONAL_TIME_FORMATTER_WITH_NANOS_1, STRICT_DATE_OPTIONAL_TIME_FORMATTER_WITH_NANOS_2);
 
     /////////////////////////////////////////
     //
