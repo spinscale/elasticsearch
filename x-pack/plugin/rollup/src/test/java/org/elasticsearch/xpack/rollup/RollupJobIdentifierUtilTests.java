@@ -123,7 +123,7 @@ public class RollupJobIdentifierUtilTests extends ESTestCase {
     }
 
     public void testBadTimeZone() {
-        final GroupConfig group = new GroupConfig(new DateHistogramGroupConfig("foo", new DateHistogramInterval("1h"), null, "EST"));
+        final GroupConfig group = new GroupConfig(new DateHistogramGroupConfig("foo", new DateHistogramInterval("1h"), null, "CET"));
         final RollupJobConfig job = new RollupJobConfig("foo", "index", "rollup", "*/5 * * * * ?", 10,  group, emptyList(), null);
         RollupJobCaps cap = new RollupJobCaps(job);
         Set<RollupJobCaps> caps = singletonSet(cap);
