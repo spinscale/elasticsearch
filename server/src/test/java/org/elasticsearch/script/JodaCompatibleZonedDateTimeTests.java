@@ -42,9 +42,11 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.Month;
 import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.Locale;
 
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.is;
 
 public class JodaCompatibleZonedDateTimeTests extends ESTestCase {
     private static final Logger DEPRECATION_LOGGER =
@@ -221,6 +223,12 @@ public class JodaCompatibleZonedDateTimeTests extends ESTestCase {
     public void testYearOfEra() {
         assertMethodDeprecation(() -> assertThat(javaTime.getYearOfEra(), equalTo(jodaTime.getYearOfEra())),
             "getYearOfEra()", "get(ChronoField.YEAR_OF_ERA)");
+    }
+
+    public void testToString() {
+        ZonedDateTime time = ZonedDateTime.of(2018, 12, 12, 12, 0, 0, 0, ZoneOffset.UTC);
+        javaTime = new JodaCompatibleZonedDateTime(time.toInstant(), ZoneOffset.UTC);
+        assertThat(javaTime.toString(), is("2018-12-12T12:00:00.000Z"));
     }
 
     public void testToString1() {
