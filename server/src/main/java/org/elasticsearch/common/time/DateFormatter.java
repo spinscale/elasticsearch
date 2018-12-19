@@ -139,7 +139,11 @@ public interface DateFormatter {
             if (Strings.hasLength(input) == false) {
                 throw new IllegalArgumentException("Cannot have empty element in multi date format pattern: " + input);
             }
-            formatters.add(DateFormatters.forPattern(pattern.substring(1)));
+            if (pattern.startsWith("8")) {
+                formatters.add(DateFormatters.forPattern(pattern.substring(1)));
+            } else {
+                formatters.add(Joda.forPattern(pattern));
+            }
         }
 
         if (formatters.size() == 1) {
