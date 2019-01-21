@@ -79,8 +79,8 @@ public class DateUtils {
         return ZoneId.of(zoneId).normalized();
     }
 
-    static final Instant MIN_NANOSECOND_INSTANT = Instant.parse("1677-09-21T00:12:43.145224192Z");
-    static final Instant MAX_NANOSECOND_INSTANT = Instant.parse("2262-04-11T23:47:16.854775807Z");
+    private static final Instant MIN_NANOSECOND_INSTANT = Instant.parse("1677-09-21T00:12:43.145224192Z");
+    private static final Instant MAX_NANOSECOND_INSTANT = Instant.parse("2262-04-11T23:47:16.854775807Z");
 
     /**
      * convert a java time instant to a long value which is stored in lucene

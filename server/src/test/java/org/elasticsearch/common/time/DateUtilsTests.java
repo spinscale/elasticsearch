@@ -102,7 +102,7 @@ public class DateUtilsTests extends ESTestCase {
     }
 
     private Instant createRandomInstant() {
-        long seconds = randomLong() / 1_000_000_000L;
+        long seconds = randomLongBetween(0, Long.MAX_VALUE) / 1_000_000_000L;
         long nanos = randomLongBetween(0, 999_999_999L);
         return Instant.ofEpochSecond(seconds, nanos);
     }
