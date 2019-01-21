@@ -273,7 +273,7 @@ public final class SearchPhaseController {
             .collect(Collectors.toList());
     }
 
-    private static void transformNanoToMilli(TopFieldDocs[] shardTopDocs, Sort sort) {
+    static void transformNanoToMilli(TopFieldDocs[] shardTopDocs, Sort sort) {
         for (int sortIdx = 0; sortIdx < shardTopDocs[0].fields.length; sortIdx++) {
             final int idx = sortIdx;
 
@@ -295,13 +295,14 @@ public final class SearchPhaseController {
                     break;
                 }
 
-                if (foundNanosecondSort == false && sortField instanceof SortedNanosecondsNumericSortField) {
+                boolean isNanoSecondSortField = sortField instanceof SortedNanosecondsNumericSortField;
+                if (foundNanosecondSort == false && isNanoSecondSortField) {
                     foundNanosecondSort = true;
                     nanoSecondsSortField = (SortedNanosecondsNumericSortField) sortField;
                     continue;
                 }
 
-                if (foundRegularSort == false && (sortField instanceof SortedNanosecondsNumericSortField == false)) {
+                if (foundRegularSort == false && isNanoSecondSortField == false) {
                     foundRegularSort = true;
                     regularSortField = sortField;
                 }
@@ -313,13 +314,13 @@ public final class SearchPhaseController {
             }
 
             boolean mixedMode = foundNanosecondSort && foundRegularSort;
+            boolean isNanoSecondSortField = sort.getSort()[sortIdx] instanceof SortedNanosecondsNumericSortField;
             if (mixedMode == false) {
                 // ensure that the sort[idx] is either a nanoseconds or a numeric sort depending on where the hits were
                 // no matter what the first position is
-                boolean isSortFieldNanoSortField = sort.getSort()[sortIdx] instanceof SortedNanosecondsNumericSortField;
-                if (foundNanosecondSort && isSortFieldNanoSortField == false) {
+                if (foundNanosecondSort && isNanoSecondSortField == false) {
                     sort.getSort()[sortIdx] = nanoSecondsSortField;
-                } else if (foundRegularSort && isSortFieldNanoSortField) {
+                } else if (foundRegularSort && isNanoSecondSortField) {
                     sort.getSort()[sortIdx] = regularSortField;
                 }
             } else {
@@ -327,7 +328,7 @@ public final class SearchPhaseController {
                 transformScoreToMilliseconds(shardTopDocs, sortIdx);
 
                 // only replace if the sort field is a nanosecond field, that is used by TopDocs.merge
-                if (sort.getSort()[sortIdx] instanceof SortedNanosecondsNumericSortField) {
+                if (isNanoSecondSortField) {
                     sort.getSort()[sortIdx] = regularSortField;
                 }
             }
