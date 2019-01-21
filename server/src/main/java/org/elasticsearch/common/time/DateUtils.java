@@ -23,7 +23,6 @@ import org.apache.logging.log4j.LogManager;
 import org.elasticsearch.common.logging.DeprecationLogger;
 import org.joda.time.DateTimeZone;
 
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
@@ -80,8 +79,8 @@ public class DateUtils {
         return ZoneId.of(zoneId).normalized();
     }
 
-    private static final Instant MIN_NANOSECOND_INSTANT = Instant.parse("1677-09-21T00:12:43.145224192Z");
-    private static final Instant MAX_NANOSECOND_INSTANT = Instant.parse("2262-04-11T23:47:16.854775807Z");
+    static final Instant MIN_NANOSECOND_INSTANT = Instant.parse("1677-09-21T00:12:43.145224192Z");
+    static final Instant MAX_NANOSECOND_INSTANT = Instant.parse("2262-04-11T23:47:16.854775807Z");
 
     /**
      * convert a java time instant to a long value which is stored in lucene
@@ -99,7 +98,7 @@ public class DateUtils {
             throw new IllegalArgumentException("date[" + instant + "] is after 2262-04-11T23:47:16.854775807 and cannot be " +
                 "stored in nanosecond resolution");
         }
-        return new BigDecimal(instant.getEpochSecond()).movePointRight(9).add(new BigDecimal(instant.getNano())).longValueExact();
+        return instant.getEpochSecond() * 1_000_000_000 + instant.getNano();
     }
 
     /**

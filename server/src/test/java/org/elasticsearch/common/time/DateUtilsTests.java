@@ -60,9 +60,10 @@ public class DateUtilsTests extends ESTestCase {
 
     public void testInstantToLong() {
         assertThat(toLong(Instant.EPOCH), is(0L));
-        Instant now = Instant.now();
-        long timeSinceEpochInNanos = now.getEpochSecond() * 1_000_000_000 + now.getNano();
-        assertThat(toLong(now), is(timeSinceEpochInNanos));
+
+        Instant instant = createRandomInstant();
+        long timeSinceEpochInNanos = instant.getEpochSecond() * 1_000_000_000 + instant.getNano();
+        assertThat(toLong(instant), is(timeSinceEpochInNanos));
     }
 
     public void testInstantToLongMin() {
@@ -79,10 +80,12 @@ public class DateUtilsTests extends ESTestCase {
 
     public void testLongToInstant() {
         assertThat(toInstant(0), is(Instant.EPOCH));
+        assertThat(toInstant(-1), is(Instant.EPOCH.minusNanos(1)));
+        assertThat(toInstant(1), is(Instant.EPOCH.plusNanos(1)));
 
-        Instant now = Instant.now();
-        long nowInNs = toLong(now);
-        assertThat(toInstant(nowInNs), is(now));
+        Instant instant = createRandomInstant();
+        long nowInNs = toLong(instant);
+        assertThat(toInstant(nowInNs), is(instant));
 
         assertThat(toInstant(Long.MIN_VALUE),
             is(ZonedDateTime.parse("1677-09-21T00:12:43.145224192Z").toInstant()));
@@ -93,8 +96,14 @@ public class DateUtilsTests extends ESTestCase {
     public void testNanosToMillis() {
         assertThat(toMilliSeconds(0), is(Instant.EPOCH.toEpochMilli()));
 
-        Instant now = Instant.now();
-        long nowInNs = toLong(now);
-        assertThat(toMilliSeconds(nowInNs), is(now.toEpochMilli()));
+        Instant instant = createRandomInstant();
+        long nowInNs = toLong(instant);
+        assertThat(toMilliSeconds(nowInNs), is(instant.toEpochMilli()));
+    }
+
+    private Instant createRandomInstant() {
+        long seconds = randomLong() / 1_000_000_000L;
+        long nanos = randomLongBetween(0, 999_999_999L);
+        return Instant.ofEpochSecond(seconds, nanos);
     }
 }
