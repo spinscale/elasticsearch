@@ -1,4 +1,4 @@
-[[date]]
+[[nanosecond]]
 === Nanosecond datatype
 
 This datatype is an addition to the `date` datatype. However there is an
