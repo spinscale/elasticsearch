@@ -156,7 +156,7 @@ public class PublicationTests extends ESTestCase {
     Function<DiscoveryNode, MockNode> nodeResolver = dn -> nodes.stream().filter(mn -> mn.localNode.equals(dn)).findFirst().get();
 
     private void initializeCluster(VotingConfiguration initialConfig) {
-        node1.coordinationState.setInitialState(CoordinationStateTests.clusterState(0L, 1L, n1, initialConfig, initialConfig, 0L));
+        node1.coordinationState.setInitialState(CoordinationStateTests.clusterState(0L, 0L, n1, initialConfig, initialConfig, 0L));
         StartJoinRequest startJoinRequest = new StartJoinRequest(n1, 1L);
         node1.coordinationState.handleJoin(node1.coordinationState.handleStartJoin(startJoinRequest));
         node1.coordinationState.handleJoin(node2.coordinationState.handleStartJoin(startJoinRequest));
@@ -346,7 +346,7 @@ public class PublicationTests extends ESTestCase {
         publication.pendingPublications.entrySet().stream().collect(shuffle()).forEach(e -> {
             if (e.getKey().equals(n2)) {
                 if (timeOut) {
-                    publication.onTimeout();
+                    publication.cancel("timed out");
                 } else {
                     e.getValue().onFailure(new TransportException(new Exception("dummy failure")));
                 }
@@ -407,7 +407,7 @@ public class PublicationTests extends ESTestCase {
             }
         });
 
-        publication.onTimeout();
+        publication.cancel("timed out");
         assertTrue(publication.completed);
         assertTrue(publication.committed);
         assertEquals(committingNodes, ackListener.await(0L, TimeUnit.SECONDS));
