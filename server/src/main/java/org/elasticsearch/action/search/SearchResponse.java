@@ -63,6 +63,8 @@ import static org.elasticsearch.action.search.ShardSearchFailure.readShardSearch
  */
 public class SearchResponse extends ActionResponse implements ChunkedToXContentObject {
 
+    private static final TransportVersion SEARCH_BYTES_READ = TransportVersion.fromName("search_bytes_read");
+
     // for cross-cluster scenarios where cluster names are shown in API responses, use this string
     // rather than empty string (RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY) we use internally
     public static final String LOCAL_CLUSTER_NAME_REPRESENTATION = "(local)";
@@ -91,6 +93,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
     private final long tookInMillis;
     // only used for telemetry purposes on the coordinating node, where the search response gets created
     private transient Long timeRangeFilterFromMillis;
+    private long bytesRead;
 
     // SearchHits from top_hits aggs to release when this response is released.
     private final List<SearchHits> topHitsToRelease;
@@ -140,6 +143,9 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
         tookInMillis = in.readVLong();
         skippedShards = in.readVInt();
         pointInTimeId = in.readOptionalBytesReference();
+        if (in.getTransportVersion().supports(SEARCH_BYTES_READ)) {
+            bytesRead = in.readVLong();
+        }
     }
 
     public SearchResponse(
@@ -515,10 +521,26 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
         out.writeVLong(tookInMillis);
         out.writeVInt(skippedShards);
         out.writeOptionalBytesReference(pointInTimeId);
+        if (out.getTransportVersion().supports(SEARCH_BYTES_READ)) {
+            out.writeVLong(bytesRead);
+        }
     }
 
     public Long getTimeRangeFilterFromMillis() {
         return timeRangeFilterFromMillis;
+    }
+
+    /**
+     * @return total bytes read from the Lucene directory during this search, across all shards
+     *         that contributed to the response. Zero when the directory metrics feature flag is
+     *         disabled or when talking to a node that predates {@code SEARCH_BYTES_READ}.
+     */
+    public long getBytesRead() {
+        return bytesRead;
+    }
+
+    public void setBytesRead(long bytesRead) {
+        this.bytesRead = bytesRead;
     }
 
     @Override

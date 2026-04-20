@@ -97,6 +97,47 @@ public class SearchResponseMergerTests extends ESTestCase {
         assertTrue(executorService.awaitTermination(5, TimeUnit.SECONDS));
     }
 
+    public void testMergeBytesRead() throws InterruptedException {
+        SearchTimeProvider timeProvider = new SearchTimeProvider(0, 0, () -> 0L);
+        long expectedTotal = 0L;
+        try (
+            SearchResponseMerger merger = new SearchResponseMerger(
+                0,
+                0,
+                SearchContext.TRACK_TOTAL_HITS_ACCURATE,
+                timeProvider,
+                emptyReduceContextBuilder()
+            )
+        ) {
+            for (int i = 0; i < numResponses; i++) {
+                long bytesRead = randomNonNegativeLong() >>> 8; // keep room for the sum
+                expectedTotal += bytesRead;
+                SearchResponse searchResponse = SearchResponseUtils.emptyWithTotalHits(
+                    null,
+                    1,
+                    1,
+                    0,
+                    100L,
+                    ShardSearchFailure.EMPTY_ARRAY,
+                    SearchResponse.Clusters.EMPTY
+                );
+                searchResponse.setBytesRead(bytesRead);
+                try {
+                    addResponse(merger, searchResponse);
+                } finally {
+                    searchResponse.decRef();
+                }
+            }
+            awaitResponsesAdded();
+            SearchResponse merged = merger.getMergedResponse(SearchResponse.Clusters.EMPTY);
+            try {
+                assertEquals(expectedTotal, merged.getBytesRead());
+            } finally {
+                merged.decRef();
+            }
+        }
+    }
+
     public void testMergeTookInMillis() throws InterruptedException {
         long currentRelativeTime = randomNonNegativeLong();
         SearchTimeProvider timeProvider = new SearchTimeProvider(randomLong(), 0, () -> currentRelativeTime);

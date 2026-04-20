@@ -68,6 +68,7 @@ import org.elasticsearch.search.aggregations.bucket.terms.TermsAggregationBuilde
 import org.elasticsearch.search.aggregations.support.CoreValuesSourceType;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.search.internal.AliasFilter;
+import org.elasticsearch.search.internal.BytesReadTracker;
 import org.elasticsearch.search.internal.LegacyReaderContext;
 import org.elasticsearch.search.internal.ReaderContext;
 import org.elasticsearch.search.internal.ScrollContext;
@@ -204,7 +205,8 @@ public class DefaultSearchContextTests extends MapperServiceTestCase {
                 randomBoolean(),
                 randomInt(),
                 MEMORY_ACCOUNTING_BUFFER_SIZE,
-                null
+                null,
+                BytesReadTracker.NOOP
             );
             contextWithoutScroll.from(300);
             contextWithoutScroll.close();
@@ -248,7 +250,8 @@ public class DefaultSearchContextTests extends MapperServiceTestCase {
                     randomBoolean(),
                     randomInt(),
                     MEMORY_ACCOUNTING_BUFFER_SIZE,
-                    null
+                    null,
+                    BytesReadTracker.NOOP
                 )
             ) {
                 context1.from(300);
@@ -332,7 +335,8 @@ public class DefaultSearchContextTests extends MapperServiceTestCase {
                     randomBoolean(),
                     randomInt(),
                     MEMORY_ACCOUNTING_BUFFER_SIZE,
-                    null
+                    null,
+                    BytesReadTracker.NOOP
                 )
             ) {
 
@@ -376,7 +380,8 @@ public class DefaultSearchContextTests extends MapperServiceTestCase {
                     randomBoolean(),
                     randomInt(),
                     MEMORY_ACCOUNTING_BUFFER_SIZE,
-                    null
+                    null,
+                    BytesReadTracker.NOOP
                 )
             ) {
                 context3.sliceBuilder(null).parsedQuery(parsedQuery).preProcess();
@@ -409,7 +414,8 @@ public class DefaultSearchContextTests extends MapperServiceTestCase {
                     randomBoolean(),
                     randomInt(),
                     MEMORY_ACCOUNTING_BUFFER_SIZE,
-                    null
+                    null,
+                    BytesReadTracker.NOOP
                 )
             ) {
                 context4.sliceBuilder(new SliceBuilder(1, 2)).parsedQuery(parsedQuery).preProcess();
@@ -482,7 +488,8 @@ public class DefaultSearchContextTests extends MapperServiceTestCase {
                 randomBoolean(),
                 randomInt(),
                 MEMORY_ACCOUNTING_BUFFER_SIZE,
-                null
+                null,
+                BytesReadTracker.NOOP
             );
 
             assertThat(context.searcher().hasCancellations(), is(false));
@@ -1138,7 +1145,8 @@ public class DefaultSearchContextTests extends MapperServiceTestCase {
                 randomBoolean(),
                 randomInt(),
                 MEMORY_ACCOUNTING_BUFFER_SIZE,
-                null
+                null,
+                BytesReadTracker.NOOP
             );
         }
     }

@@ -140,6 +140,7 @@ import org.elasticsearch.index.shard.SearchOperationListener;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.index.store.DirectoryMetrics;
 import org.elasticsearch.index.store.PluggableDirectoryMetricsHolder;
+import org.elasticsearch.index.store.Store;
 import org.elasticsearch.index.store.StoreMetrics;
 import org.elasticsearch.index.translog.TranslogStats;
 import org.elasticsearch.indices.breaker.CircuitBreakerService;
@@ -2048,6 +2049,14 @@ public class IndicesService extends AbstractLifecycleComponent
     @Nullable
     public ThreadPoolMergeExecutorService getThreadPoolMergeExecutorService() {
         return threadPoolMergeExecutorService;
+    }
+
+    /**
+     * @return the {@link StoreMetrics} holder shared by all indices on this node, or {@code null} if the directory metrics
+     * feature flag is disabled. Used by the search layer to observe per-thread bytes-read counters during query and fetch.
+     */
+    public PluggableDirectoryMetricsHolder<StoreMetrics> storeMetricsHolder() {
+        return Store.DIRECTORY_METRICS_FEATURE_FLAG.isEnabled() ? storeMetricHolder : null;
     }
 
     /**

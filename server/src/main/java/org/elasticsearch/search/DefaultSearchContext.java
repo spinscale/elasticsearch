@@ -63,6 +63,7 @@ import org.elasticsearch.search.fetch.subphase.FetchFieldsContext;
 import org.elasticsearch.search.fetch.subphase.FetchSourceContext;
 import org.elasticsearch.search.fetch.subphase.ScriptFieldsContext;
 import org.elasticsearch.search.fetch.subphase.highlight.SearchHighlightContext;
+import org.elasticsearch.search.internal.BytesReadTracker;
 import org.elasticsearch.search.internal.ContextIndexSearcher;
 import org.elasticsearch.search.internal.ReaderContext;
 import org.elasticsearch.search.internal.ScrollContext;
@@ -159,6 +160,7 @@ final class DefaultSearchContext extends SearchContext {
     private final Map<String, SearchExtBuilder> searchExtBuilders = new HashMap<>();
     private final SearchExecutionContext searchExecutionContext;
     private final FetchPhase fetchPhase;
+    private final BytesReadTracker bytesReadTracker;
 
     DefaultSearchContext(
         ReaderContext readerContext,
@@ -173,11 +175,13 @@ final class DefaultSearchContext extends SearchContext {
         boolean enableQueryPhaseParallelCollection,
         int minimumDocsPerSlice,
         long memoryAccountingBufferSize,
-        @Nullable CircuitBreaker circuitBreaker
+        @Nullable CircuitBreaker circuitBreaker,
+        BytesReadTracker bytesReadTracker
     ) throws IOException {
         this.readerContext = readerContext;
         this.request = request;
         this.fetchPhase = fetchPhase;
+        this.bytesReadTracker = bytesReadTracker;
         boolean success = false;
         try {
             this.searchType = request.searchType();
@@ -214,6 +218,7 @@ final class DefaultSearchContext extends SearchContext {
                     minimumDocsPerSlice
                 );
             }
+            this.searcher.setBytesReadTracker(bytesReadTracker);
             closeFuture.addListener(ActionListener.releasing(Releasables.wrap(engineSearcher, searcher)));
             this.relativeTimeSupplier = relativeTimeSupplier;
             this.timeout = timeout;
@@ -350,6 +355,11 @@ final class DefaultSearchContext extends SearchContext {
     @Override
     public void addDfsResult() {
         this.dfsResult = new DfsSearchResult(this.readerContext.id(), this.shardTarget, this.request);
+    }
+
+    @Override
+    public BytesReadTracker bytesReadTracker() {
+        return bytesReadTracker;
     }
 
     /**

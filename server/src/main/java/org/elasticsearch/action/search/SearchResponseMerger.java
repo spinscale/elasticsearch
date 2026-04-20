@@ -137,12 +137,14 @@ public final class SearchResponseMerger implements Releasable {
         Boolean trackTotalHits = null;
 
         TopDocsStats topDocsStats = new TopDocsStats(trackTotalHitsUpTo);
+        long mergedBytesRead = 0L;
 
         for (SearchResponse searchResponse : searchResponses) {
             totalShards += searchResponse.getTotalShards();
             skippedShards += searchResponse.getSkippedShards();
             successfulShards += searchResponse.getSuccessfulShards();
             numReducePhases += searchResponse.getNumReducePhases();
+            mergedBytesRead += searchResponse.getBytesRead();
 
             Collections.addAll(failures, searchResponse.getShardFailures());
 
@@ -218,7 +220,7 @@ public final class SearchResponseMerger implements Releasable {
             // make failures ordering consistent between ordinary search and CCS by looking at the shard they come from
             Arrays.sort(shardFailures, FAILURES_COMPARATOR);
             long tookInMillis = searchTimeProvider.buildTookInMillis();
-            return new SearchResponse(
+            SearchResponse merged = new SearchResponse(
                 mergedSearchHits,
                 reducedAggs,
                 suggest,
@@ -237,6 +239,8 @@ public final class SearchResponseMerger implements Releasable {
                 topHitsToRelease,
                 null
             );
+            merged.setBytesRead(mergedBytesRead);
+            return merged;
         } finally {
             mergedSearchHits.decRef();
         }

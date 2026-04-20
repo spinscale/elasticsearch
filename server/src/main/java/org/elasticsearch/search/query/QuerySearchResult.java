@@ -48,6 +48,7 @@ import static org.elasticsearch.common.lucene.Lucene.writeTopDocs;
 public final class QuerySearchResult extends SearchPhaseResult {
     private static final TransportVersion TIMESTAMP_RANGE_TELEMETRY = TransportVersion.fromName("timestamp_range_telemetry");
     private static final TransportVersion BATCHED_QUERY_PHASE_VERSION = TransportVersion.fromName("batched_query_phase_version");
+    private static final TransportVersion SEARCH_BYTES_READ = TransportVersion.fromName("search_bytes_read");
 
     private int from;
     private int size;
@@ -84,6 +85,8 @@ public final class QuerySearchResult extends SearchPhaseResult {
 
     @Nullable
     private Long timeRangeFilterFromMillis;
+
+    private long bytesRead;
 
     /**
      * SearchHits from top_hits that must be released when this result is released. Eagerly allocated so
@@ -474,6 +477,9 @@ public final class QuerySearchResult extends SearchPhaseResult {
             if (in.getTransportVersion().supports(TIMESTAMP_RANGE_TELEMETRY)) {
                 timeRangeFilterFromMillis = in.readOptionalLong();
             }
+            if (in.getTransportVersion().supports(SEARCH_BYTES_READ)) {
+                bytesRead = in.readVLong();
+            }
             success = true;
         } finally {
             if (success == false) {
@@ -541,6 +547,9 @@ public final class QuerySearchResult extends SearchPhaseResult {
         }
         if (out.getTransportVersion().supports(TIMESTAMP_RANGE_TELEMETRY)) {
             out.writeOptionalLong(timeRangeFilterFromMillis);
+        }
+        if (out.getTransportVersion().supports(SEARCH_BYTES_READ)) {
+            out.writeVLong(bytesRead);
         }
     }
 
@@ -637,5 +646,13 @@ public final class QuerySearchResult extends SearchPhaseResult {
 
     public void setTimeRangeFilterFromMillis(Long timeRangeFilterFromMillis) {
         this.timeRangeFilterFromMillis = timeRangeFilterFromMillis;
+    }
+
+    public long getBytesRead() {
+        return bytesRead;
+    }
+
+    public void setBytesRead(long bytesRead) {
+        this.bytesRead = bytesRead;
     }
 }

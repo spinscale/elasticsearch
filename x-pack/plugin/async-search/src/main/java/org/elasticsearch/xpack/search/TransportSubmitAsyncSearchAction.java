@@ -9,6 +9,7 @@ package org.elasticsearch.xpack.search;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.DocWriteResponse;
 import org.elasticsearch.action.search.SearchRequest;
+import org.elasticsearch.action.search.SearchResponseHeaders;
 import org.elasticsearch.action.search.TransportSearchAction;
 import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.HandledTransportAction;
@@ -97,6 +98,9 @@ public class TransportSubmitAsyncSearchAction extends HandledTransportAction<Sub
                 threadContext.addResponseHeader(AsyncExecutionId.ASYNC_EXECUTION_IS_RUNNING_HEADER, response.isRunning() ? "?1" : "?0");
                 if (response.getId() != null) {
                     threadContext.addResponseHeader(AsyncExecutionId.ASYNC_EXECUTION_ID_HEADER, response.getId());
+                }
+                if (response.getSearchResponse() != null) {
+                    SearchResponseHeaders.addBytesReadHeader(threadContext, response.getSearchResponse().getBytesRead());
                 }
                 return response;
             });

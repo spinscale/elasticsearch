@@ -100,6 +100,9 @@ public class QuerySearchResultTests extends ESTestCase {
         if (randomBoolean()) {
             result.aggregations(InternalAggregationsTests.createTestInstance());
         }
+        if (randomBoolean()) {
+            result.setBytesRead(randomNonNegativeLong());
+        }
         return result;
     }
 
@@ -139,6 +142,7 @@ public class QuerySearchResultTests extends ESTestCase {
                     assertThat(deserialized.aggregations(), is(nullValue()));
                 }
                 assertEquals(querySearchResult.terminatedEarly(), deserialized.terminatedEarly());
+                assertEquals(querySearchResult.getBytesRead(), deserialized.getBytesRead());
             } finally {
                 releaseCompletionSuggestOptionHits(deserialized);
                 deserialized.decRef();

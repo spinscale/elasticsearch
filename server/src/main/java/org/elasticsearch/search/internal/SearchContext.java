@@ -379,6 +379,15 @@ public abstract class SearchContext implements Releasable {
     public abstract void addFetchResult();
 
     /**
+     * @return the {@link BytesReadTracker} that accumulates bytes read from the Lucene {@link org.apache.lucene.store.Directory}
+     * during this shard's portion of the search request. Returns {@link BytesReadTracker#NOOP} when directory metrics are
+     * disabled, so callers can wrap work unconditionally.
+     */
+    public BytesReadTracker bytesReadTracker() {
+        return BytesReadTracker.NOOP;
+    }
+
+    /**
      * Return a handle over the profilers for the current search request, or {@code null} if profiling is not enabled.
      */
     public abstract Profilers getProfilers();

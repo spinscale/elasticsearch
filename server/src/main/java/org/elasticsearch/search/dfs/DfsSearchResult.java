@@ -30,6 +30,7 @@ import java.util.Map;
 public final class DfsSearchResult extends SearchPhaseResult {
 
     private static final TransportVersion DFS_SEARCH_TIMED_OUT = TransportVersion.fromName("dfs_search_timed_out");
+    private static final TransportVersion SEARCH_BYTES_READ = TransportVersion.fromName("search_bytes_read");
 
     private static final Term[] EMPTY_TERMS = new Term[0];
     private static final TermStatistics[] EMPTY_TERM_STATS = new TermStatistics[0];
@@ -40,6 +41,7 @@ public final class DfsSearchResult extends SearchPhaseResult {
     private int maxDoc;
     private boolean searchTimedOut;
     private SearchProfileDfsPhaseResult searchProfileDfsPhaseResult;
+    private long bytesRead;
 
     public DfsSearchResult(StreamInput in) throws IOException {
         contextId = new ShardSearchContextId(in);
@@ -61,6 +63,9 @@ public final class DfsSearchResult extends SearchPhaseResult {
         searchProfileDfsPhaseResult = in.readOptionalWriteable(SearchProfileDfsPhaseResult::new);
         if (in.getTransportVersion().supports(DFS_SEARCH_TIMED_OUT)) {
             searchTimedOut = in.readBoolean();
+        }
+        if (in.getTransportVersion().supports(SEARCH_BYTES_READ)) {
+            bytesRead = in.readVLong();
         }
     }
 
@@ -128,6 +133,14 @@ public final class DfsSearchResult extends SearchPhaseResult {
         return searchProfileDfsPhaseResult;
     }
 
+    public long getBytesRead() {
+        return bytesRead;
+    }
+
+    public void setBytesRead(long bytesRead) {
+        this.bytesRead = bytesRead;
+    }
+
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         contextId.writeTo(out);
@@ -143,6 +156,9 @@ public final class DfsSearchResult extends SearchPhaseResult {
         out.writeOptionalWriteable(searchProfileDfsPhaseResult);
         if (out.getTransportVersion().supports(DFS_SEARCH_TIMED_OUT)) {
             out.writeBoolean(searchTimedOut);
+        }
+        if (out.getTransportVersion().supports(SEARCH_BYTES_READ)) {
+            out.writeVLong(bytesRead);
         }
     }
 

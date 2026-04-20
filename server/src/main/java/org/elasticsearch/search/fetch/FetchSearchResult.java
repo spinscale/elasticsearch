@@ -9,6 +9,7 @@
 
 package org.elasticsearch.search.fetch;
 
+import org.elasticsearch.TransportVersion;
 import org.elasticsearch.common.breaker.CircuitBreaker;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.io.stream.StreamInput;
@@ -31,7 +32,11 @@ import static org.elasticsearch.search.fetch.chunk.TransportFetchPhaseCoordinati
 
 public final class FetchSearchResult extends SearchPhaseResult {
 
+    private static final TransportVersion SEARCH_BYTES_READ = TransportVersion.fromName("search_bytes_read");
+
     private SearchHits hits;
+
+    private long bytesRead;
 
     private long searchHitsSizeBytes = 0L;
 
@@ -79,6 +84,9 @@ public final class FetchSearchResult extends SearchPhaseResult {
                 lastChunkBytes = in.readReleasableBytesReference();
             }
         }
+        if (in.getTransportVersion().supports(SEARCH_BYTES_READ)) {
+            bytesRead = in.readVLong();
+        }
     }
 
     @Override
@@ -94,6 +102,9 @@ public final class FetchSearchResult extends SearchPhaseResult {
             if (lastChunkHitCount > 0 && lastChunkBytes != null) {
                 out.writeBytesReference(lastChunkBytes);
             }
+        }
+        if (out.getTransportVersion().supports(SEARCH_BYTES_READ)) {
+            out.writeVLong(bytesRead);
         }
     }
 
@@ -132,6 +143,14 @@ public final class FetchSearchResult extends SearchPhaseResult {
 
     public long getSearchHitsSizeBytes() {
         return searchHitsSizeBytes;
+    }
+
+    public long getBytesRead() {
+        return bytesRead;
+    }
+
+    public void setBytesRead(long bytesRead) {
+        this.bytesRead = bytesRead;
     }
 
     public void releaseCircuitBreakerBytes(CircuitBreaker circuitBreaker) {

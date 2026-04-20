@@ -56,6 +56,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -103,6 +104,7 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
     private final int maxConcurrentRequestsPerNode;
     private final Map<String, PendingExecutions> pendingExecutionsPerNode;
     private final AtomicBoolean requestCancelled = new AtomicBoolean();
+    private final AtomicLong totalBytesRead = new AtomicLong();
     private final int skippedCount;
     private final TransportVersion mintransportVersion;
     protected final SearchResponseMetrics searchResponseMetrics;
@@ -512,6 +514,7 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
         if (logger.isTraceEnabled()) {
             logger.trace("got first-phase result from {}", result != null ? result.getSearchShardTarget() : null);
         }
+        accumulateShardBytesRead(result);
         // clean a previous error on this shard group (note, this code will be serialized on the same shardIndex value level
         // so it's ok concurrency wise to miss potentially the shard failures being created because of another failure
         // in the #addShardFailure, because by definition, it will happen on *another* shardIndex
@@ -523,6 +526,35 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
             successfulOps.incrementAndGet();
             finishOneShard();
         });
+    }
+
+    /**
+     * Adds to the running coordinator-side total of bytes read from the Lucene directory during
+     * this search. Invoked on every shard result arrival (query / DFS / combined query-and-fetch)
+     * and on every fetch phase result arrival, so that the final {@link SearchResponse} carries
+     * the cross-shard total.
+     */
+    public void addBytesRead(long delta) {
+        if (delta > 0L) {
+            totalBytesRead.addAndGet(delta);
+        }
+    }
+
+    private void accumulateShardBytesRead(SearchPhaseResult result) {
+        if (result == null) {
+            return;
+        }
+        var queryResult = result.queryResult();
+        if (queryResult != null) {
+            addBytesRead(queryResult.getBytesRead());
+        }
+        var fetchResult = result.fetchResult();
+        if (fetchResult != null) {
+            addBytesRead(fetchResult.getBytesRead());
+        }
+        if (result instanceof org.elasticsearch.search.dfs.DfsSearchResult dfs) {
+            addBytesRead(dfs.getBytesRead());
+        }
     }
 
     /**
@@ -583,7 +615,7 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
         int numFailures = failures.length;
         assert numSuccess + numFailures == getNumShards()
             : "numSuccess(" + numSuccess + ") + numFailures(" + numFailures + ") != totalShards(" + getNumShards() + ")";
-        return new SearchResponse(
+        SearchResponse response = new SearchResponse(
             internalSearchResponse,
             scrollId,
             getNumShards(),
@@ -594,6 +626,8 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
             clusters,
             searchContextId
         );
+        response.setBytesRead(totalBytesRead.get());
+        return response;
     }
 
     /**

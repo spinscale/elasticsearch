@@ -23,6 +23,7 @@ import org.elasticsearch.common.util.concurrent.EsExecutors;
 import org.elasticsearch.injection.guice.Inject;
 import org.elasticsearch.rest.action.search.SearchResponseMetrics;
 import org.elasticsearch.tasks.Task;
+import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
 import static org.elasticsearch.action.search.ParsedScrollId.QUERY_AND_FETCH_TYPE;
@@ -39,6 +40,7 @@ public class TransportSearchScrollAction extends HandledTransportAction<SearchSc
     private final ClusterService clusterService;
     private final SearchTransportService searchTransportService;
     private final SearchResponseMetrics searchResponseMetrics;
+    private final ThreadPool threadPool;
 
     @Inject
     public TransportSearchScrollAction(
@@ -52,10 +54,12 @@ public class TransportSearchScrollAction extends HandledTransportAction<SearchSc
         this.clusterService = clusterService;
         this.searchTransportService = searchTransportService;
         this.searchResponseMetrics = searchResponseMetrics;
+        this.threadPool = transportService.getThreadPool();
     }
 
     @Override
     protected void doExecute(Task task, SearchScrollRequest request, ActionListener<SearchResponse> listener) {
+        ActionListener<SearchResponse> headerListener = SearchResponseHeaders.wrapWithBytesReadHeader(listener, threadPool);
         ActionListener<SearchResponse> loggingAndMetrics = new ActionListener<>() {
             @Override
             public void onResponse(SearchResponse searchResponse) {
@@ -74,7 +78,7 @@ public class TransportSearchScrollAction extends HandledTransportAction<SearchSc
                             }
                         }
                     }
-                    listener.onResponse(searchResponse);
+                    headerListener.onResponse(searchResponse);
                     // increment after the delegated onResponse to ensure we don't
                     // record both a success and a failure if there is an exception
                     searchResponseMetrics.incrementResponseCount(responseCountTotalStatus);
@@ -86,7 +90,7 @@ public class TransportSearchScrollAction extends HandledTransportAction<SearchSc
             @Override
             public void onFailure(Exception e) {
                 searchResponseMetrics.incrementResponseCount(SearchResponseMetrics.ResponseCountTotalStatus.FAILURE);
-                listener.onFailure(e);
+                headerListener.onFailure(e);
             }
         };
         try {

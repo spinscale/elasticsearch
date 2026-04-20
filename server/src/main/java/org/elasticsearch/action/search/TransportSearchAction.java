@@ -366,7 +366,10 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         executeRequest(
             (SearchTask) task,
             searchRequest,
-            activityLogger.wrap(listener, new SearchLogContextBuilder(task, namedWriteableRegistry, searchRequest)),
+            SearchResponseHeaders.wrapWithBytesReadHeader(
+                activityLogger.wrap(listener, new SearchLogContextBuilder(task, namedWriteableRegistry, searchRequest)),
+                threadPool
+            ),
             AsyncSearchActionProvider::new,
             true
         );

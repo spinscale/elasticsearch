@@ -80,6 +80,8 @@ public class ContextIndexSearcher extends IndexSearcher implements Releasable {
 
     private volatile boolean timeExceeded = false;
 
+    private BytesReadTracker bytesReadTracker = BytesReadTracker.NOOP;
+
     /** constructor for non-concurrent search */
     @SuppressWarnings("this-escape")
     public ContextIndexSearcher(
@@ -358,8 +360,10 @@ public class ContextIndexSearcher extends IndexSearcher implements Releasable {
         LeafSlice[] leafSlices = getSlices();
         if (leafSlices.length == 0) {
             assert leafContexts.isEmpty();
-            doAggregationPostCollection(firstCollector);
-            return collectorManager.reduce(Collections.singletonList(firstCollector));
+            return bytesReadTracker.trackOnCurrentThread(() -> {
+                doAggregationPostCollection(firstCollector);
+                return collectorManager.reduce(Collections.singletonList(firstCollector));
+            });
         } else {
             final List<C> collectors = new ArrayList<>(leafSlices.length);
             collectors.add(firstCollector);
@@ -375,10 +379,10 @@ public class ContextIndexSearcher extends IndexSearcher implements Releasable {
             for (int i = 0; i < leafSlices.length; ++i) {
                 final LeafReaderContextPartition[] leaves = leafSlices[i].partitions;
                 final C collector = collectors.get(i);
-                listTasks.add(() -> {
+                listTasks.add(() -> bytesReadTracker.trackOnCurrentThread(() -> {
                     search(leaves, weight, collector);
                     return collector;
-                });
+                }));
             }
             List<C> collectedCollectors = getTaskExecutor().invokeAll(listTasks);
             return collectorManager.reduce(collectedCollectors);
@@ -430,6 +434,16 @@ public class ContextIndexSearcher extends IndexSearcher implements Releasable {
     /**  If the search has timed out following Elasticsearch custom implementation */
     public boolean timeExceeded() {
         return timeExceeded;
+    }
+
+    /**
+     * Install a tracker that records bytes read from the Lucene {@link org.apache.lucene.store.Directory}
+     * during search execution. The tracker is invoked once per slice-callable, which avoids
+     * double-counting when Lucene's {@code TaskExecutor.invokeAll} runs one slice inline on the
+     * caller thread.
+     */
+    public void setBytesReadTracker(BytesReadTracker bytesReadTracker) {
+        this.bytesReadTracker = Objects.requireNonNull(bytesReadTracker);
     }
 
     public void throwTimeExceededException() {

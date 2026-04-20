@@ -613,6 +613,8 @@ public class SearchResponseTests extends ESTestCase {
 
     public void testSerialization() throws IOException {
         SearchResponse searchResponse = createTestItem(false);
+        long expectedBytesRead = randomNonNegativeLong();
+        searchResponse.setBytesRead(expectedBytesRead);
         Suggest suggestForRelease = searchResponse.getSuggest();
         try {
             SearchResponse deserialized = copyWriteable(
@@ -634,6 +636,7 @@ public class SearchResponseTests extends ESTestCase {
                 assertEquals(searchResponse.getTotalShards(), deserialized.getTotalShards());
                 assertEquals(searchResponse.getSkippedShards(), deserialized.getSkippedShards());
                 assertEquals(searchResponse.getClusters(), deserialized.getClusters());
+                assertEquals(expectedBytesRead, deserialized.getBytesRead());
             } finally {
                 deserialized.decRef();
             }
