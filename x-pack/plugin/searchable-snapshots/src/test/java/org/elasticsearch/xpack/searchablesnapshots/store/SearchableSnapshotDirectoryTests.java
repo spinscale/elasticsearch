@@ -10,8 +10,10 @@ import org.apache.lucene.codecs.CodecUtil;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.NumericDocValuesField;
+import org.apache.lucene.document.StoredField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.TextField;
+import org.apache.lucene.index.CodecReader;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.FieldInfos;
@@ -30,11 +32,13 @@ import org.apache.lucene.search.TermInSetQuery;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TermRangeQuery;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.store.IOContext;
 import org.apache.lucene.store.IndexInput;
 import org.apache.lucene.tests.mockfile.FilterFileSystemProvider;
 import org.apache.lucene.tests.mockfile.FilterSeekableByteChannel;
 import org.apache.lucene.tests.search.CheckHits;
+import org.apache.lucene.tests.util.TestUtil;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.action.support.PlainActionFuture;
@@ -315,6 +319,64 @@ public class SearchableSnapshotDirectoryTests extends AbstractSearchableSnapshot
                 }
             }
         });
+    }
+
+    /**
+     * Searchable snapshot inputs assume they are never opened with a {@code MERGE} {@code IOContext}, since mounted indices are
+     * read-only and never merge. {@code BlobCacheBufferedIndexInput#bufferSize(IOContext)} gives a merge context a 4 KB buffer, while
+     * the {@code MetadataCachingIndexInput} constructor asserts that the buffer fits into
+     * {@code BlobStoreCacheService#DEFAULT_CACHED_BLOB_SIZE} (1 KB). This affects both {@code FrozenIndexInput} (shared cache) and
+     * {@code CachedBlobContainerIndexInput} (full copy).
+     * <p>
+     * Since apache/lucene#16684 (Lucene 10.6), {@code Lucene90CompressingStoredFieldsReader#getMergeInstance()} no longer clones the
+     * reader's existing {@code .fdt} input. It opens the file again through {@code Directory#openInput} with {@code IOContext.merge()},
+     * so that merges read it sequentially without changing the read advice of the input that searches use.
+     * <p>
+     * Elasticsearch also calls {@code getMergeInstance()} outside of merges, to get a stored fields reader that is optimized for
+     * adjacent doc IDs:
+     * <ul>
+     *     <li>{@code SequentialStoredFieldsLeafReader#getSequentialStoredFieldsReader()}, which is used by
+     *     <ul>
+     *         <li>the fetch phase: {@code FetchPhase} calls {@code StoredFieldLoader#getLoader}, which switches to the sequential
+     *         reader in {@code StoredFieldLoader#reader} when a segment has more than 10 adjacent docs to load,</li>
+     *         <li>{@code StoredFieldLoader#fromSpecSequential}, e.g. in ES|QL's {@code ValuesFromSingleReader},</li>
+     *         <li>{@code LuceneChangesSnapshot};</li>
+     *     </ul>
+     *     </li>
+     *     <li>{@code IndexDiskUsageAnalyzer#analyzeStoredFields}.</li>
+     * </ul>
+     * When one of these runs against a searchable snapshot, it now opens a {@code MetadataCachingIndexInput} with a merge context.
+     * The fetch phase path is the one {@code NodesCachesStatsIntegTests} randomly runs into.
+     * <p>
+     * Two conditions are needed to hit this:
+     * <ul>
+     *     <li>The segment must not be a compound file. For compound files Lucene returns a slice of the already open {@code .cfs}
+     *     input, and slices keep the context of their parent. Elasticsearch writes flushed segments as compound files, but merged
+     *     segments larger than {@code index.compound_format} (1 GB by default) are not, which is common for force-merged indices
+     *     that get mounted.</li>
+     *     <li>The {@code .fdt} file must be larger than 1 KB, since the buffer size is capped at the file length.</li>
+     * </ul>
+     */
+    public void testStoredFieldsMergeInstanceOnNonCompoundSegment() throws Exception {
+        final Path indexPath = createTempDir();
+        try (
+            Directory directory = FSDirectory.open(indexPath);
+            IndexWriter writer = new IndexWriter(
+                directory,
+                new IndexWriterConfig().setCodec(TestUtil.getDefaultCodec()).setUseCompoundFile(false)
+            )
+        ) {
+            final Document doc = new Document();
+            doc.add(new StoredField("bytes", randomByteArrayOfLength(4096)));
+            writer.addDocument(doc);
+        }
+
+        try (
+            Directory snapshotDirectory = SearchableSnapshotDirectoryFactory.newDirectoryFromIndex(indexPath, createTempDir());
+            DirectoryReader reader = DirectoryReader.open(snapshotDirectory)
+        ) {
+            ((CodecReader) reader.leaves().get(0).reader()).getFieldsReader().getMergeInstance();
+        }
     }
 
     public void testReadByte() throws Exception {
