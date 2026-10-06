@@ -90,6 +90,14 @@ public class ES920DiskBBQBFloat16VectorsFormatTests extends BaseBFloat16KnnVecto
         throw new AssumptionViolatedException("ivf doesn't enforce visitation limit");
     }
 
+    // TODO: BFloat16 DiskBBQ is not merge-stable: flush clusters the in-memory float32 vectors while
+    // merge clusters the bf16 values read back from the segment, so cenivf/clivf sizes drift.
+    // Re-enable once flush k-means runs on bf16-truncated vectors.
+    @Override
+    protected boolean mergeIsStable() {
+        return false;
+    }
+
     @Override
     public void testAdvance() throws Exception {
         // TODO re-enable with hierarchical IVF, clustering as it is is flaky
