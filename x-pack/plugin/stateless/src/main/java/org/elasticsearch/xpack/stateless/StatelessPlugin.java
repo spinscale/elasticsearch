@@ -225,6 +225,7 @@ import org.elasticsearch.xpack.stateless.recovery.TransportStatelessUnpromotable
 import org.elasticsearch.xpack.stateless.recovery.metering.StatelessPrimaryRelocationMetricsCollector;
 import org.elasticsearch.xpack.stateless.recovery.metering.StatelessRecoveryMetricsCollector;
 import org.elasticsearch.xpack.stateless.recovery.metering.StatelessSearchNodeRecoveryMetricsCollector;
+import org.elasticsearch.xpack.stateless.recovery.shardinfo.GlobalOrdinalsWarmer;
 import org.elasticsearch.xpack.stateless.recovery.shardinfo.SearchShardInformationIndexListener;
 import org.elasticsearch.xpack.stateless.recovery.shardinfo.SearchShardInformationMetricsCollector;
 import org.elasticsearch.xpack.stateless.recovery.shardinfo.TransportFetchSearchShardInformationAction;
@@ -1157,7 +1158,9 @@ public class StatelessPlugin extends Plugin
                     client,
                     shardInformationMetricsCollector,
                     clusterService.getClusterSettings(),
-                    threadPool.relativeTimeInMillisSupplier()
+                    threadPool.relativeTimeInMillisSupplier(),
+                    threadPool,
+                    new GlobalOrdinalsWarmer(indicesService, threadPool.executor(ThreadPool.Names.WARMER))
                 )
             );
             final var shuttingDown = setAndGet(isNodeShuttingDown, new AtomicBoolean());
@@ -1527,6 +1530,9 @@ public class StatelessPlugin extends Plugin
             ScalingExecutorBuilder.HOT_THREADS_ON_LARGE_QUEUE_DURATION_THRESHOLD_SETTING,
             ScalingExecutorBuilder.HOT_THREADS_ON_LARGE_QUEUE_INTERVAL_SETTING,
             SearchShardInformationIndexListener.QUERY_SEARCH_SHARD_INFORMATION_SETTING,
+            SearchShardInformationIndexListener.GLOBAL_ORDINALS_ENABLED_SETTING,
+            SearchShardInformationIndexListener.GLOBAL_ORDINALS_MAX_AGE_SETTING,
+            SearchShardInformationIndexListener.GLOBAL_ORDINALS_WARMING_TIMEOUT_SETTING,
             StatelessSnapshotSettings.STATELESS_SNAPSHOT_ENABLED_SETTING,
             StatelessSnapshotSettings.RELOCATION_DURING_SNAPSHOT_ENABLED_SETTING,
             StatelessSnapshotSettings.STATELESS_SNAPSHOT_WAIT_FOR_ACTIVE_PRIMARY_TIMEOUT_SETTING,
@@ -1655,7 +1661,6 @@ public class StatelessPlugin extends Plugin
                 )
             );
 
-            indexModule.addIndexEventListener(this.searchShardInformationIndexListener.get());
             indexModule.addIndexEventListener(this.pitRelocationService.get());
 
             final var searchIdxVersion = indexModule.indexSettings().getIndexVersionCreated();
@@ -1683,6 +1688,7 @@ public class StatelessPlugin extends Plugin
                     clusterService.get()
                 )
             );
+            indexModule.addIndexEventListener(this.searchShardInformationIndexListener.get());
         }
         indexModule.addIndexEventListener(recoveryMetricsCollector.get());
     }

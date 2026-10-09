@@ -45,6 +45,11 @@ public interface IndexFieldDataCache {
         default void onCache(ShardId shardId, String fieldName, GlobalOrdinalsAccounting info) {}
 
         /**
+         * Called every time global ordinals of a field are requested from the cache
+         */
+        default void onGlobalOrdinalsAccess(ShardId shardId, String fieldName) {}
+
+        /**
          * Called after the fielddata is unloaded
          */
         default void onRemoval(ShardId shardId, String fieldName, boolean wasEvicted, long sizeInBytes) {}

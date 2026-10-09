@@ -19,9 +19,12 @@ import org.elasticsearch.index.fielddata.ordinals.GlobalOrdinalsAccounting;
 import org.elasticsearch.index.shard.ShardId;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
 
 public class ShardFieldData implements IndexFieldDataCache.Listener {
 
@@ -30,6 +33,12 @@ public class ShardFieldData implements IndexFieldDataCache.Listener {
     private final ConcurrentMap<String, CounterMetric> perFieldTotals = ConcurrentCollections.newConcurrentMap();
     private final CounterMetric buildTime = new CounterMetric();
     private final ConcurrentMap<String, GlobalOrdinalFieldStats> perFieldGlobalOrdinalStats = ConcurrentCollections.newConcurrentMap();
+    private final ConcurrentMap<String, AtomicLong> perFieldGlobalOrdinalsLastAccess = ConcurrentCollections.newConcurrentMap();
+    private final LongSupplier relativeTimeInMillisSupplier;
+
+    public ShardFieldData(LongSupplier relativeTimeInMillisSupplier) {
+        this.relativeTimeInMillisSupplier = relativeTimeInMillisSupplier;
+    }
 
     public FieldDataStats stats(String... fields) {
         Map<String, Long> fieldTotals = null;
@@ -64,6 +73,21 @@ public class ShardFieldData implements IndexFieldDataCache.Listener {
         );
     }
 
+    /**
+     * Return names of the fields whose global ordinals were accessed since
+     *
+     * @param relativeTimeInMillis a timestamp of the same clock this instance was created with
+     */
+    public Set<String> globalOrdinalsFieldsAccessedSince(long relativeTimeInMillis) {
+        Set<String> fields = new HashSet<>();
+        for (var entry : perFieldGlobalOrdinalsLastAccess.entrySet()) {
+            if (entry.getValue().get() >= relativeTimeInMillis) {
+                fields.add(entry.getKey());
+            }
+        }
+        return fields;
+    }
+
     @Override
     public void onCache(ShardId shardId, String fieldName, Accountable ramUsage) {
         totalMetric.inc(ramUsage.ramBytesUsed());
@@ -93,6 +117,18 @@ public class ShardFieldData implements IndexFieldDataCache.Listener {
             }
             return globalOrdinalFieldStats;
         });
+    }
+
+    @Override
+    public void onGlobalOrdinalsAccess(ShardId shardId, String fieldName) {
+        final long now = relativeTimeInMillisSupplier.getAsLong();
+        final AtomicLong lastAccess = perFieldGlobalOrdinalsLastAccess.get(fieldName);
+        if (lastAccess == null) {
+            perFieldGlobalOrdinalsLastAccess.computeIfAbsent(fieldName, f -> new AtomicLong()).accumulateAndGet(now, Math::max);
+        } else if (lastAccess.get() < now) {
+            // skip the write when the cached clock has not advanced, which is the common case on the hot path
+            lastAccess.accumulateAndGet(now, Math::max);
+        }
     }
 
     @Override

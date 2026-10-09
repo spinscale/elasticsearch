@@ -13,6 +13,7 @@ import org.elasticsearch.action.ActionRequest;
 import org.elasticsearch.action.ActionResponse;
 import org.elasticsearch.action.ActionType;
 import org.elasticsearch.action.LatchedActionListener;
+import org.elasticsearch.action.support.SubscribableListener;
 import org.elasticsearch.client.internal.support.AbstractClient;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.routing.RecoverySource;
@@ -20,6 +21,8 @@ import org.elasticsearch.cluster.routing.ShardRouting;
 import org.elasticsearch.cluster.routing.UnassignedInfo;
 import org.elasticsearch.common.settings.ClusterSettings;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.util.concurrent.DeterministicTaskQueue;
+import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.IndexVersion;
@@ -81,12 +84,21 @@ public class SearchShardInformationIndexListenerTests extends ESTestCase {
     );
     private final ClusterSettings clusterSettings = new ClusterSettings(
         // Settings.EMPTY,
-        Settings.builder().put(SearchShardInformationIndexListener.QUERY_SEARCH_SHARD_INFORMATION_SETTING.getKey(), true).build(),
-        Set.of(SearchShardInformationIndexListener.QUERY_SEARCH_SHARD_INFORMATION_SETTING)
+        Settings.builder()
+            .put(SearchShardInformationIndexListener.QUERY_SEARCH_SHARD_INFORMATION_SETTING.getKey(), true)
+            .put(SearchShardInformationIndexListener.GLOBAL_ORDINALS_ENABLED_SETTING.getKey(), true)
+            .build(),
+        Set.of(
+            SearchShardInformationIndexListener.QUERY_SEARCH_SHARD_INFORMATION_SETTING,
+            SearchShardInformationIndexListener.GLOBAL_ORDINALS_ENABLED_SETTING,
+            SearchShardInformationIndexListener.GLOBAL_ORDINALS_WARMING_TIMEOUT_SETTING
+        )
     );
     private final CountDownLatch latch = new CountDownLatch(1);
     private final LatchedActionListener<Void> latchedActionListener = new LatchedActionListener<>(ActionListener.noop(), latch);
     private final RecordingClient client = new RecordingClient();
+    private final DeterministicTaskQueue deterministicTaskQueue = new DeterministicTaskQueue();
+    private final RecordingGlobalOrdinalsWarmer globalOrdinalsWarmer = new RecordingGlobalOrdinalsWarmer();
     private MockLog mockLog;
 
     @Before
@@ -118,12 +130,7 @@ public class SearchShardInformationIndexListenerTests extends ESTestCase {
         when(indexShard.routingEntry()).thenReturn(shardRouting);
         when(indexShard.shardId()).thenReturn(shardId);
 
-        SearchShardInformationIndexListener listener = new SearchShardInformationIndexListener(
-            client,
-            collector,
-            clusterSettings,
-            System::currentTimeMillis
-        );
+        SearchShardInformationIndexListener listener = createListener(System::currentTimeMillis);
 
         listener.beforeIndexShardRecovery(indexShard, indexSettings, latchedActionListener);
 
@@ -148,12 +155,7 @@ public class SearchShardInformationIndexListenerTests extends ESTestCase {
         when(indexShard.routingEntry()).thenReturn(shardRouting);
         when(indexShard.shardId()).thenReturn(shardId);
 
-        SearchShardInformationIndexListener listener = new SearchShardInformationIndexListener(
-            client,
-            collector,
-            clusterSettings,
-            System::currentTimeMillis
-        );
+        SearchShardInformationIndexListener listener = createListener(System::currentTimeMillis);
 
         listener.beforeIndexShardRecovery(indexShard, indexSettings, latchedActionListener);
 
@@ -174,12 +176,7 @@ public class SearchShardInformationIndexListenerTests extends ESTestCase {
         when(indexShard.routingEntry()).thenReturn(shardRouting);
         when(indexShard.shardId()).thenReturn(shardId);
 
-        SearchShardInformationIndexListener listener = new SearchShardInformationIndexListener(
-            client,
-            collector,
-            clusterSettings,
-            System::currentTimeMillis
-        );
+        SearchShardInformationIndexListener listener = createListener(System::currentTimeMillis);
 
         listener.beforeIndexShardRecovery(indexShard, indexSettings, latchedActionListener);
 
@@ -204,12 +201,7 @@ public class SearchShardInformationIndexListenerTests extends ESTestCase {
         when(indexShard.routingEntry()).thenReturn(shardRouting);
         when(indexShard.shardId()).thenReturn(shardId);
 
-        SearchShardInformationIndexListener listener = new SearchShardInformationIndexListener(
-            client,
-            collector,
-            clusterSettings,
-            System::currentTimeMillis
-        );
+        SearchShardInformationIndexListener listener = createListener(System::currentTimeMillis);
 
         listener.beforeIndexShardRecovery(indexShard, indexSettings, latchedActionListener);
 
@@ -232,12 +224,7 @@ public class SearchShardInformationIndexListenerTests extends ESTestCase {
         when(indexShard.routingEntry()).thenReturn(shardRouting);
         when(indexShard.shardId()).thenReturn(shardId);
 
-        SearchShardInformationIndexListener listener = new SearchShardInformationIndexListener(
-            client,
-            collector,
-            clusterSettings,
-            System::currentTimeMillis
-        );
+        SearchShardInformationIndexListener listener = createListener(System::currentTimeMillis);
 
         listener.beforeIndexShardRecovery(indexShard, indexSettings, latchedActionListener);
 
@@ -269,12 +256,7 @@ public class SearchShardInformationIndexListenerTests extends ESTestCase {
         when(indexShard.routingEntry()).thenReturn(shardRouting);
         when(indexShard.shardId()).thenReturn(shardId);
 
-        SearchShardInformationIndexListener listener = new SearchShardInformationIndexListener(
-            client,
-            collector,
-            clusterSettings,
-            System::currentTimeMillis
-        );
+        SearchShardInformationIndexListener listener = createListener(System::currentTimeMillis);
 
         listener.beforeIndexShardRecovery(indexShard, indexSettings, latchedActionListener);
 
@@ -309,12 +291,7 @@ public class SearchShardInformationIndexListenerTests extends ESTestCase {
         AtomicLong time = new AtomicLong(0);
         LongSupplier controllableTime = time::get;
 
-        SearchShardInformationIndexListener listener = new SearchShardInformationIndexListener(
-            client,
-            collector,
-            clusterSettings,
-            controllableTime
-        );
+        SearchShardInformationIndexListener listener = createListener(controllableTime);
 
         listener.beforeIndexShardRecovery(indexShard, indexSettings, latchedActionListener);
 
@@ -359,12 +336,7 @@ public class SearchShardInformationIndexListenerTests extends ESTestCase {
     }
 
     public void testSetInactive() {
-        SearchShardInformationIndexListener listener = new SearchShardInformationIndexListener(
-            client,
-            collector,
-            clusterSettings,
-            System::currentTimeMillis
-        );
+        SearchShardInformationIndexListener listener = createListener(System::currentTimeMillis);
 
         // simulate a settings update
         Settings newSettings = Settings.builder()
@@ -379,12 +351,7 @@ public class SearchShardInformationIndexListenerTests extends ESTestCase {
     }
 
     public void testSwitchBetweenActiveAndInactive() {
-        SearchShardInformationIndexListener listener = new SearchShardInformationIndexListener(
-            client,
-            collector,
-            clusterSettings,
-            System::currentTimeMillis
-        );
+        SearchShardInformationIndexListener listener = createListener(System::currentTimeMillis);
         IndexShard indexShard = mock(IndexShard.class);
         ShardRouting shardRouting = createSearchOnlyShard(shardId, "search_node_1").moveToStarted(1);
         when(indexShard.routingEntry()).thenReturn(shardRouting);
@@ -420,12 +387,7 @@ public class SearchShardInformationIndexListenerTests extends ESTestCase {
         when(indexShard.routingEntry()).thenReturn(shardRouting);
         when(indexShard.shardId()).thenReturn(shardId);
 
-        SearchShardInformationIndexListener listener = new SearchShardInformationIndexListener(
-            client,
-            collector,
-            clusterSettings,
-            System::currentTimeMillis
-        );
+        SearchShardInformationIndexListener listener = createListener(System::currentTimeMillis);
 
         listener.beforeIndexShardRecovery(indexShard, indexSettings, latchedActionListener);
 
@@ -445,6 +407,309 @@ public class SearchShardInformationIndexListenerTests extends ESTestCase {
             .getMeasurements(InstrumentType.LONG_COUNTER, SearchShardInformationMetricsCollector.REQUESTS_SHARD_MOVED_TOTAL);
         assertThat(measurements, hasSize(1));
         assertThat(measurements.get(0).getLong(), equalTo(1L));
+    }
+
+    public void testAfterRecoveryWithoutShardInformationRequestDoesNotWait() {
+        SearchShardInformationIndexListener listener = createListener(System::currentTimeMillis);
+        IndexShard indexShard = mockRecoveringShard();
+        latchedActionListener.onResponse(null);
+
+        SubscribableListener<Void> recovery = new SubscribableListener<>();
+        listener.afterIndexShardRecovery(indexShard, recovery);
+
+        assertTrue(recovery.isDone());
+        assertThat(globalOrdinalsWarmer.warmings, hasSize(0));
+        assertNoGlobalOrdinalsWarmingMetrics();
+    }
+
+    public void testAfterRecoveryWithoutGlobalOrdinalsFieldsDoesNotWarm() {
+        SearchShardInformationIndexListener listener = createListener(System::currentTimeMillis);
+        IndexShard indexShard = mockRecoveringShard();
+        listener.beforeIndexShardRecovery(indexShard, indexSettings, latchedActionListener);
+        client.<TransportFetchSearchShardInformationAction.Request, TransportFetchSearchShardInformationAction.Response>lastExecution()
+            .listener()
+            .onResponse(
+                randomFrom(
+                    TransportFetchSearchShardInformationAction.NO_OTHER_SHARDS_FOUND_RESPONSE,
+                    TransportFetchSearchShardInformationAction.SHARD_HAS_MOVED_RESPONSE,
+                    new TransportFetchSearchShardInformationAction.Response(0)
+                )
+            );
+
+        SubscribableListener<Void> recovery = new SubscribableListener<>();
+        listener.afterIndexShardRecovery(indexShard, recovery);
+
+        assertTrue(recovery.isDone());
+        assertThat(globalOrdinalsWarmer.warmings, hasSize(0));
+        assertNoGlobalOrdinalsWarmingMetrics();
+    }
+
+    public void testAfterRecoveryWaitsForGlobalOrdinalsToBeWarmed() {
+        AtomicLong time = new AtomicLong(0);
+        SearchShardInformationIndexListener listener = createListener(time::get);
+        IndexShard indexShard = mockRecoveringShard();
+        listener.beforeIndexShardRecovery(indexShard, indexSettings, latchedActionListener);
+        RecordingClient.Execution<
+            TransportFetchSearchShardInformationAction.Request,
+            TransportFetchSearchShardInformationAction.Response> execution = client.lastExecution();
+
+        final Set<String> fields = Set.of("field1", "field2");
+        final boolean responseBeforeRecoveryDone = randomBoolean();
+        if (responseBeforeRecoveryDone) {
+            execution.listener().onResponse(new TransportFetchSearchShardInformationAction.Response(0, fields));
+        }
+
+        SubscribableListener<Void> recovery = new SubscribableListener<>();
+        listener.afterIndexShardRecovery(indexShard, recovery);
+        if (responseBeforeRecoveryDone == false) {
+            assertThat(globalOrdinalsWarmer.warmings, hasSize(0));
+            execution.listener().onResponse(new TransportFetchSearchShardInformationAction.Response(0, fields));
+        }
+
+        assertThat(globalOrdinalsWarmer.warmings, hasSize(1));
+        RecordingGlobalOrdinalsWarmer.Warming warming = globalOrdinalsWarmer.warmings.getFirst();
+        assertThat(warming.indexShard(), equalTo(indexShard));
+        assertThat(warming.fieldNames(), equalTo(fields));
+        assertFalse("recovery must wait for global ordinals", recovery.isDone());
+
+        final long warmingTime = time.addAndGet(randomLongBetween(1, 1000));
+        warming.listener().onResponse(fields.size());
+
+        assertTrue(recovery.isDone());
+        assertNull(safeAwait(recovery));
+        assertThat(
+            getLongCounterTotal(SearchShardInformationMetricsCollector.GLOBAL_ORDINALS_WARMED_FIELDS_TOTAL),
+            equalTo((long) fields.size())
+        );
+        List<Measurement> durations = meterRegistry.getRecorder()
+            .getMeasurements(
+                InstrumentType.LONG_HISTOGRAM,
+                SearchShardInformationMetricsCollector.GLOBAL_ORDINALS_WARMING_DURATION_HISTOGRAM
+            );
+        assertThat(durations, hasSize(1));
+        assertThat(durations.getFirst().getLong(), equalTo(warmingTime));
+        assertThat(getLongCounterTotal(SearchShardInformationMetricsCollector.GLOBAL_ORDINALS_WARMING_TIMEOUTS_TOTAL), equalTo(0L));
+    }
+
+    public void testAfterRecoveryStopsWaitingAfterTimeout() {
+        final TimeValue timeout = TimeValue.timeValueSeconds(randomIntBetween(1, 60));
+        applyGlobalOrdinalsSettings(true, timeout);
+        SearchShardInformationIndexListener listener = createListener(deterministicTaskQueue::getCurrentTimeMillis);
+        IndexShard indexShard = mockRecoveringShard();
+        listener.beforeIndexShardRecovery(indexShard, indexSettings, latchedActionListener);
+        RecordingClient.Execution<
+            TransportFetchSearchShardInformationAction.Request,
+            TransportFetchSearchShardInformationAction.Response> execution = client.lastExecution();
+        // the timeout covers the shard information request too, so it may not have completed
+        final boolean receivedResponse = randomBoolean();
+        if (receivedResponse) {
+            execution.listener().onResponse(new TransportFetchSearchShardInformationAction.Response(0, Set.of("field")));
+        }
+
+        SubscribableListener<Void> recovery = new SubscribableListener<>();
+        listener.afterIndexShardRecovery(indexShard, recovery);
+        assertThat(globalOrdinalsWarmer.warmings, hasSize(receivedResponse ? 1 : 0));
+        assertFalse(recovery.isDone());
+
+        deterministicTaskQueue.runAllTasksInTimeOrder();
+
+        assertTrue(recovery.isDone());
+        assertNull(safeAwait(recovery));
+        assertThat(deterministicTaskQueue.getCurrentTimeMillis(), equalTo(timeout.millis()));
+        assertThat(getLongCounterTotal(SearchShardInformationMetricsCollector.GLOBAL_ORDINALS_WARMING_TIMEOUTS_TOTAL), equalTo(1L));
+        List<Measurement> durations = meterRegistry.getRecorder()
+            .getMeasurements(
+                InstrumentType.LONG_HISTOGRAM,
+                SearchShardInformationMetricsCollector.GLOBAL_ORDINALS_WARMING_DURATION_HISTOGRAM
+            );
+        assertThat(durations, hasSize(1));
+        assertThat(durations.getFirst().getLong(), equalTo(timeout.millis()));
+
+        // completing the warming after the timeout has no further effect
+        if (receivedResponse) {
+            globalOrdinalsWarmer.warmings.getFirst().listener().onResponse(1);
+        }
+        assertThat(getLongCounterTotal(SearchShardInformationMetricsCollector.GLOBAL_ORDINALS_WARMED_FIELDS_TOTAL), equalTo(0L));
+    }
+
+    public void testAfterRecoveryDoesNotWaitWithZeroTimeout() {
+        applyGlobalOrdinalsSettings(true, TimeValue.ZERO);
+        SearchShardInformationIndexListener listener = createListener(deterministicTaskQueue::getCurrentTimeMillis);
+        IndexShard indexShard = mockRecoveringShard();
+        listener.beforeIndexShardRecovery(indexShard, indexSettings, latchedActionListener);
+        client.<TransportFetchSearchShardInformationAction.Request, TransportFetchSearchShardInformationAction.Response>lastExecution()
+            .listener()
+            .onResponse(new TransportFetchSearchShardInformationAction.Response(0, Set.of("field")));
+
+        SubscribableListener<Void> recovery = new SubscribableListener<>();
+        listener.afterIndexShardRecovery(indexShard, recovery);
+
+        assertTrue(recovery.isDone());
+        assertFalse(deterministicTaskQueue.hasDeferredTasks());
+        // global ordinals are still built in the background
+        assertThat(globalOrdinalsWarmer.warmings, hasSize(1));
+        globalOrdinalsWarmer.warmings.getFirst().listener().onResponse(1);
+        assertThat(getLongCounterTotal(SearchShardInformationMetricsCollector.GLOBAL_ORDINALS_WARMED_FIELDS_TOTAL), equalTo(1L));
+    }
+
+    public void testAfterRecoveryDoesNotFailOnWarmingFailure() {
+        SearchShardInformationIndexListener listener = createListener(deterministicTaskQueue::getCurrentTimeMillis);
+        IndexShard indexShard = mockRecoveringShard();
+        listener.beforeIndexShardRecovery(indexShard, indexSettings, latchedActionListener);
+        client.<TransportFetchSearchShardInformationAction.Request, TransportFetchSearchShardInformationAction.Response>lastExecution()
+            .listener()
+            .onResponse(new TransportFetchSearchShardInformationAction.Response(0, Set.of("field")));
+
+        SubscribableListener<Void> recovery = new SubscribableListener<>();
+        listener.afterIndexShardRecovery(indexShard, recovery);
+        assertThat(globalOrdinalsWarmer.warmings, hasSize(1));
+
+        mockLog.addExpectation(
+            new MockLog.SeenEventExpectation(
+                "warming failure",
+                SearchShardInformationIndexListener.class.getCanonicalName(),
+                Level.WARN,
+                "could not build global ordinals for shard [" + shardId + "]"
+            )
+        );
+        globalOrdinalsWarmer.warmings.getFirst().listener().onFailure(new RuntimeException("simulated"));
+
+        assertTrue(recovery.isDone());
+        assertNull(safeAwait(recovery));
+    }
+
+    public void testAfterRecoveryDoesNotWarmWhenShardInformationRequestFails() {
+        SearchShardInformationIndexListener listener = createListener(System::currentTimeMillis);
+        IndexShard indexShard = mockRecoveringShard();
+        listener.beforeIndexShardRecovery(indexShard, indexSettings, latchedActionListener);
+        client.lastExecution().listener().onFailure(new RuntimeException("simulated"));
+
+        SubscribableListener<Void> recovery = new SubscribableListener<>();
+        listener.afterIndexShardRecovery(indexShard, recovery);
+
+        assertTrue(recovery.isDone());
+        assertThat(globalOrdinalsWarmer.warmings, hasSize(0));
+    }
+
+    public void testGlobalOrdinalsDisabledByDefault() {
+        assertFalse(SearchShardInformationIndexListener.GLOBAL_ORDINALS_ENABLED_SETTING.get(Settings.EMPTY));
+        latchedActionListener.onResponse(null);
+    }
+
+    public void testGlobalOrdinalsDisabledDoesNotWaitOrWarm() {
+        applyGlobalOrdinalsSettings(
+            false,
+            SearchShardInformationIndexListener.GLOBAL_ORDINALS_WARMING_TIMEOUT_SETTING.getDefault(Settings.EMPTY)
+        );
+        SearchShardInformationIndexListener listener = createListener(System::currentTimeMillis);
+        IndexShard indexShard = mockRecoveringShard();
+        listener.beforeIndexShardRecovery(indexShard, indexSettings, latchedActionListener);
+        RecordingClient.Execution<
+            TransportFetchSearchShardInformationAction.Request,
+            TransportFetchSearchShardInformationAction.Response> execution = client.lastExecution();
+
+        // the recovery neither waits for the shard information response nor builds the reported global ordinals
+        final boolean responseBeforeRecoveryDone = randomBoolean();
+        if (responseBeforeRecoveryDone) {
+            execution.listener().onResponse(new TransportFetchSearchShardInformationAction.Response(0, Set.of("field")));
+        }
+        SubscribableListener<Void> recovery = new SubscribableListener<>();
+        listener.afterIndexShardRecovery(indexShard, recovery);
+        assertTrue(recovery.isDone());
+        if (responseBeforeRecoveryDone == false) {
+            execution.listener().onResponse(new TransportFetchSearchShardInformationAction.Response(0, Set.of("field")));
+        }
+
+        assertThat(globalOrdinalsWarmer.warmings, hasSize(0));
+        assertFalse(deterministicTaskQueue.hasDeferredTasks());
+        assertNoGlobalOrdinalsWarmingMetrics();
+    }
+
+    public void testGlobalOrdinalsDisabledDuringRecoveryDoesNotWaitOrWarm() {
+        SearchShardInformationIndexListener listener = createListener(System::currentTimeMillis);
+        IndexShard indexShard = mockRecoveringShard();
+        listener.beforeIndexShardRecovery(indexShard, indexSettings, latchedActionListener);
+        client.<TransportFetchSearchShardInformationAction.Request, TransportFetchSearchShardInformationAction.Response>lastExecution()
+            .listener()
+            .onResponse(new TransportFetchSearchShardInformationAction.Response(0, Set.of("field")));
+
+        applyGlobalOrdinalsSettings(
+            false,
+            SearchShardInformationIndexListener.GLOBAL_ORDINALS_WARMING_TIMEOUT_SETTING.getDefault(Settings.EMPTY)
+        );
+
+        SubscribableListener<Void> recovery = new SubscribableListener<>();
+        listener.afterIndexShardRecovery(indexShard, recovery);
+        assertTrue(recovery.isDone());
+        assertThat(globalOrdinalsWarmer.warmings, hasSize(0));
+    }
+
+    public void testShardClosedDiscardsPendingGlobalOrdinalsFields() {
+        SearchShardInformationIndexListener listener = createListener(System::currentTimeMillis);
+        IndexShard indexShard = mockRecoveringShard();
+        listener.beforeIndexShardRecovery(indexShard, indexSettings, latchedActionListener);
+        RecordingClient.Execution<
+            TransportFetchSearchShardInformationAction.Request,
+            TransportFetchSearchShardInformationAction.Response> execution = client.lastExecution();
+
+        listener.afterIndexShardClosed(shardId, randomBoolean() ? indexShard : null, Settings.EMPTY);
+        execution.listener().onResponse(new TransportFetchSearchShardInformationAction.Response(0, Set.of("field")));
+
+        // a later recovery of the same shard id does not see the fields of the closed shard
+        SubscribableListener<Void> recovery = new SubscribableListener<>();
+        listener.afterIndexShardRecovery(indexShard, recovery);
+        assertTrue(recovery.isDone());
+        assertThat(globalOrdinalsWarmer.warmings, hasSize(0));
+    }
+
+    private SearchShardInformationIndexListener createListener(LongSupplier nowSupplier) {
+        return new SearchShardInformationIndexListener(
+            client,
+            collector,
+            clusterSettings,
+            nowSupplier,
+            deterministicTaskQueue.getThreadPool(),
+            globalOrdinalsWarmer
+        );
+    }
+
+    private void applyGlobalOrdinalsSettings(boolean enabled, TimeValue warmingTimeout) {
+        clusterSettings.applySettings(
+            Settings.builder()
+                .put(SearchShardInformationIndexListener.QUERY_SEARCH_SHARD_INFORMATION_SETTING.getKey(), true)
+                .put(SearchShardInformationIndexListener.GLOBAL_ORDINALS_ENABLED_SETTING.getKey(), enabled)
+                .put(SearchShardInformationIndexListener.GLOBAL_ORDINALS_WARMING_TIMEOUT_SETTING.getKey(), warmingTimeout)
+                .build()
+        );
+    }
+
+    private IndexShard mockRecoveringShard() {
+        IndexShard indexShard = mock(IndexShard.class);
+        ShardRouting shardRouting = createSearchOnlyShard(shardId, "search_node_1").moveToStarted(1);
+        when(indexShard.routingEntry()).thenReturn(shardRouting);
+        when(indexShard.shardId()).thenReturn(shardId);
+        return indexShard;
+    }
+
+    private long getLongCounterTotal(String name) {
+        return meterRegistry.getRecorder()
+            .getMeasurements(InstrumentType.LONG_COUNTER, name)
+            .stream()
+            .mapToLong(Measurement::getLong)
+            .sum();
+    }
+
+    private void assertNoGlobalOrdinalsWarmingMetrics() {
+        assertThat(
+            meterRegistry.getRecorder()
+                .getMeasurements(
+                    InstrumentType.LONG_HISTOGRAM,
+                    SearchShardInformationMetricsCollector.GLOBAL_ORDINALS_WARMING_DURATION_HISTOGRAM
+                ),
+            hasSize(0)
+        );
+        assertThat(getLongCounterTotal(SearchShardInformationMetricsCollector.GLOBAL_ORDINALS_WARMED_FIELDS_TOTAL), equalTo(0L));
+        assertThat(getLongCounterTotal(SearchShardInformationMetricsCollector.GLOBAL_ORDINALS_WARMING_TIMEOUTS_TOTAL), equalTo(0L));
     }
 
     private void assertMetrics(long expectedSuccessfulRequests, long expectedErrors) {
@@ -483,6 +748,26 @@ public class SearchShardInformationIndexListenerTests extends ESTestCase {
             ShardRouting.Role.SEARCH_ONLY,
             ShardRouting.RecoveryPriority.UNASSIGNED_EXPECTED
         ).initialize(nodeId, null, randomNonNegativeLong());
+    }
+
+    /**
+     * Records the warming requests instead of building global ordinals, which needs a real shard and is covered by
+     * {@code SearchShardInformationIndexListenerIT}.
+     */
+    private static class RecordingGlobalOrdinalsWarmer extends GlobalOrdinalsWarmer {
+
+        record Warming(IndexShard indexShard, Set<String> fieldNames, ActionListener<Integer> listener) {}
+
+        private final List<Warming> warmings = new ArrayList<>();
+
+        RecordingGlobalOrdinalsWarmer() {
+            super(null, null);
+        }
+
+        @Override
+        public void warm(IndexShard indexShard, Set<String> fieldNames, ActionListener<Integer> listener) {
+            warmings.add(new Warming(indexShard, fieldNames, listener));
+        }
     }
 
     private static class RecordingClient extends AbstractClient {

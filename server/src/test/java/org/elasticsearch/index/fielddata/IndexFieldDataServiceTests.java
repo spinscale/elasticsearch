@@ -18,12 +18,14 @@ import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.NoMergePolicy;
 import org.apache.lucene.store.ByteBuffersDirectory;
 import org.apache.lucene.util.Accountable;
 import org.apache.lucene.util.SetOnce;
 import org.elasticsearch.common.lucene.index.ElasticsearchDirectoryReader;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.IndexService;
+import org.elasticsearch.index.fielddata.ordinals.GlobalOrdinalsAccounting;
 import org.elasticsearch.index.fielddata.plain.SortedDoublesIndexFieldData;
 import org.elasticsearch.index.fielddata.plain.SortedNumericIndexFieldData;
 import org.elasticsearch.index.fielddata.plain.SortedSetOrdinalsIndexFieldData;
@@ -257,6 +259,64 @@ public class IndexFieldDataServiceTests extends ESSingleNodeTestCase {
         writer.close();
         assertEquals(1, onCacheCalled.get());
         assertEquals(1, onRemovalCalled.get());
+        ifdService.clear();
+    }
+
+    public void testGlobalOrdinalsAccessListener() throws Exception {
+        final IndexService indexService = createIndex("test");
+        final IndicesService indicesService = getInstanceFromNode(IndicesService.class);
+        // copy the ifdService since we can set the listener only once.
+        final IndexFieldDataService ifdService = new IndexFieldDataService(
+            indexService.getIndexSettings(),
+            indicesService.getIndicesFieldDataCache(),
+            indicesService.getCircuitBreakerService()
+        );
+
+        final MapperBuilderContext context = MapperBuilderContext.root(false, false);
+        final MappedFieldType fieldType = new TextFieldMapper.Builder("s", defaultIndexSettings(), createDefaultIndexAnalyzers(), false)
+            .fielddata(true)
+            .build(context)
+            .fieldType();
+        final IndexWriter writer = new IndexWriter(
+            new ByteBuffersDirectory(),
+            new IndexWriterConfig(new KeywordAnalyzer()).setMergePolicy(NoMergePolicy.INSTANCE)
+        );
+        // global ordinals are only built and cached for readers with more than one segment
+        for (int i = 0; i < 2; i++) {
+            Document doc = new Document();
+            doc.add(new StringField("s", "value" + i, Store.NO));
+            writer.addDocument(doc);
+            writer.flush();
+        }
+        final ShardId shardId = new ShardId("test", "_na_", 1);
+        final DirectoryReader reader = ElasticsearchDirectoryReader.wrap(DirectoryReader.open(writer), shardId);
+        assertThat(reader.leaves().size(), equalTo(2));
+
+        final AtomicInteger onGlobalOrdinalsBuilt = new AtomicInteger();
+        final AtomicInteger onGlobalOrdinalsAccess = new AtomicInteger();
+        ifdService.setListener(new IndexFieldDataCache.Listener() {
+            @Override
+            public void onCache(ShardId shardId, String fieldName, GlobalOrdinalsAccounting info) {
+                onGlobalOrdinalsBuilt.incrementAndGet();
+            }
+
+            @Override
+            public void onGlobalOrdinalsAccess(ShardId accessedShardId, String fieldName) {
+                assertEquals(shardId, accessedShardId);
+                assertEquals("s", fieldName);
+                onGlobalOrdinalsAccess.incrementAndGet();
+            }
+        });
+        final IndexFieldData.Global<?> ifd = ifdService.getForField(fieldType, FieldDataContext.noRuntimeFields("test", "test"));
+        final int accesses = randomIntBetween(1, 5);
+        for (int i = 0; i < accesses; i++) {
+            ifd.loadGlobal(reader);
+        }
+        assertEquals(1, onGlobalOrdinalsBuilt.get());
+        assertEquals(accesses, onGlobalOrdinalsAccess.get());
+
+        reader.close();
+        writer.close();
         ifdService.clear();
     }
 

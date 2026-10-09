@@ -31,10 +31,13 @@ import org.elasticsearch.cluster.routing.ShardRouting;
 import org.elasticsearch.cluster.routing.UnassignedInfo;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.collect.ImmutableOpenMap;
+import org.elasticsearch.common.settings.ClusterSettings;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.IndexVersion;
 import org.elasticsearch.index.engine.Engine;
+import org.elasticsearch.index.fielddata.ShardFieldData;
 import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.indices.IndicesService;
@@ -49,17 +52,21 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static org.elasticsearch.test.hamcrest.OptionalMatchers.isEmpty;
 import static org.elasticsearch.xpack.stateless.recovery.shardinfo.TransportFetchSearchShardInformationAction.NO_OTHER_SHARDS_FOUND_RESPONSE;
 import static org.elasticsearch.xpack.stateless.recovery.shardinfo.TransportFetchSearchShardInformationAction.SHARD_HAS_MOVED_RESPONSE;
+import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.not;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -81,7 +88,14 @@ public class TransportFetchSearchShardInformationActionTests extends ESTestCase 
     );
 
     private final ThreadPool threadPool = mock(ThreadPool.class);
-    private final ClusterService clusterService = mock(ClusterService.class);
+    private final ClusterSettings clusterSettings = new ClusterSettings(
+        Settings.EMPTY,
+        Set.of(
+            SearchShardInformationIndexListener.GLOBAL_ORDINALS_ENABLED_SETTING,
+            SearchShardInformationIndexListener.GLOBAL_ORDINALS_MAX_AGE_SETTING
+        )
+    );
+    private final ClusterService clusterService = mockClusterService(clusterSettings);
     private final TransportService transportService = mock(TransportService.class);
     private final IndicesService indicesService = mock(IndicesService.class);
 
@@ -122,6 +136,7 @@ public class TransportFetchSearchShardInformationActionTests extends ESTestCase 
         TransportFetchSearchShardInformationAction.Request request = new TransportFetchSearchShardInformationAction.Request("abc", shardId);
         action.shardOperation(request, ActionListener.wrap(response -> {
             assertThat(response.getLastSearcherAcquiredTime(), equalTo(lastSearcherTime));
+            assertThat(response.getGlobalOrdinalsFields(), empty());
         }, e -> fail("should not happen")));
 
         // test the function
@@ -132,6 +147,74 @@ public class TransportFetchSearchShardInformationActionTests extends ESTestCase 
         SearchEngine searchEngine = mock(SearchEngine.class);
         when(searchEngine.getLastSearcherAcquiredTime()).thenReturn(lastSearcherTime + 1);
         assertThat(functionCaptor.getValue().apply(searchEngine), equalTo(lastSearcherTime + 1));
+    }
+
+    public void testShardOperationReturnsRecentlyUsedGlobalOrdinalsFields() {
+        final TimeValue maxAge = TimeValue.timeValueMillis(randomLongBetween(1, 10_000));
+        clusterSettings.applySettings(
+            Settings.builder()
+                .put(SearchShardInformationIndexListener.GLOBAL_ORDINALS_ENABLED_SETTING.getKey(), true)
+                .put(SearchShardInformationIndexListener.GLOBAL_ORDINALS_MAX_AGE_SETTING.getKey(), maxAge)
+                .build()
+        );
+
+        final AtomicLong clock = new AtomicLong(randomLongBetween(0, 1000));
+        final ShardFieldData shardFieldData = new ShardFieldData(clock::get);
+        shardFieldData.onGlobalOrdinalsAccess(shardId, "old_field");
+        final long recentAccess = clock.addAndGet(randomLongBetween(1, 1000));
+        shardFieldData.onGlobalOrdinalsAccess(shardId, "recent_field");
+        // the recent field was accessed exactly max age ago, the old field before that
+        when(threadPool.relativeTimeInMillis()).thenReturn(recentAccess + maxAge.millis());
+
+        IndexShard indexShard = mock(IndexShard.class);
+        when(indexShard.tryWithEngineOrNull(any())).thenReturn(0L);
+        when(indexShard.fieldData()).thenReturn(shardFieldData);
+        when(indicesService.getShardOrNull(shardId)).thenReturn(indexShard);
+
+        TransportFetchSearchShardInformationAction.Request request = new TransportFetchSearchShardInformationAction.Request("abc", shardId);
+        action.shardOperation(request, ActionListener.wrap(response -> {
+            assertThat(response.getGlobalOrdinalsFields(), equalTo(Set.of("recent_field")));
+        }, e -> fail("should not happen")));
+    }
+
+    public void testShardOperationWithZeroMaxAgeReturnsNoGlobalOrdinalsFields() {
+        clusterSettings.applySettings(
+            Settings.builder()
+                .put(SearchShardInformationIndexListener.GLOBAL_ORDINALS_ENABLED_SETTING.getKey(), true)
+                .put(SearchShardInformationIndexListener.GLOBAL_ORDINALS_MAX_AGE_SETTING.getKey(), TimeValue.ZERO)
+                .build()
+        );
+
+        IndexShard indexShard = mock(IndexShard.class);
+        when(indexShard.tryWithEngineOrNull(any())).thenReturn(0L);
+        when(indicesService.getShardOrNull(shardId)).thenReturn(indexShard);
+
+        TransportFetchSearchShardInformationAction.Request request = new TransportFetchSearchShardInformationAction.Request("abc", shardId);
+        action.shardOperation(
+            request,
+            ActionListener.wrap(response -> { assertThat(response.getGlobalOrdinalsFields(), empty()); }, e -> fail("should not happen"))
+        );
+        verify(indexShard, never()).fieldData();
+    }
+
+    public void testShardOperationReturnsNoGlobalOrdinalsFieldsWhenDisabled() {
+        // disabled by default
+        if (randomBoolean()) {
+            clusterSettings.applySettings(
+                Settings.builder().put(SearchShardInformationIndexListener.GLOBAL_ORDINALS_ENABLED_SETTING.getKey(), false).build()
+            );
+        }
+
+        IndexShard indexShard = mock(IndexShard.class);
+        when(indexShard.tryWithEngineOrNull(any())).thenReturn(0L);
+        when(indicesService.getShardOrNull(shardId)).thenReturn(indexShard);
+
+        TransportFetchSearchShardInformationAction.Request request = new TransportFetchSearchShardInformationAction.Request("abc", shardId);
+        action.shardOperation(
+            request,
+            ActionListener.wrap(response -> { assertThat(response.getGlobalOrdinalsFields(), empty()); }, e -> fail("should not happen"))
+        );
+        verify(indexShard, never()).fieldData();
     }
 
     public void testShardsEmpty() {
@@ -392,6 +475,12 @@ public class TransportFetchSearchShardInformationActionTests extends ESTestCase 
         );
 
         verifyNoInteractions(transportService);
+    }
+
+    private static ClusterService mockClusterService(ClusterSettings clusterSettings) {
+        ClusterService clusterService = mock(ClusterService.class);
+        when(clusterService.getClusterSettings()).thenReturn(clusterSettings);
+        return clusterService;
     }
 
     private Task createTask() {

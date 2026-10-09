@@ -9,6 +9,7 @@ package org.elasticsearch.xpack.stateless.recovery.shardinfo;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.elasticsearch.TransportVersion;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionListenerResponseHandler;
 import org.elasticsearch.action.ActionRequest;
@@ -48,8 +49,12 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.LongSupplier;
+
+import static org.elasticsearch.xpack.stateless.recovery.shardinfo.SearchShardInformationIndexListener.GLOBAL_ORDINALS_ENABLED_SETTING;
+import static org.elasticsearch.xpack.stateless.recovery.shardinfo.SearchShardInformationIndexListener.GLOBAL_ORDINALS_MAX_AGE_SETTING;
 
 /**
  * Transport Action to share the state of the last acquired index searcher across shards.
@@ -59,7 +64,10 @@ import java.util.function.LongSupplier;
  *
  * A Request to a node contains just a shardId and the node to be sent to
  *
- * A NodeResponse contains the time of the last acquired searcher in milliseconds since the epoch.
+ * A NodeResponse contains the time of the last acquired searcher in milliseconds since the epoch. If
+ * {@link SearchShardInformationIndexListener#GLOBAL_ORDINALS_ENABLED_SETTING} is set, it also contains the names of the fields
+ * whose global ordinals have been used on that shard copy within {@link SearchShardInformationIndexListener#GLOBAL_ORDINALS_MAX_AGE_SETTING},
+ * so that the recovering copy can build them before it starts serving searches.
  *
  * The transport action contains the node operation, which queries the SearchEngine instance.
  */
@@ -82,6 +90,9 @@ public class TransportFetchSearchShardInformationAction extends HandledTransport
     private final String shardActionName;
     private final AtomicInteger seed = new AtomicInteger(0);
     private final LongSupplier nowSupplier;
+    private final LongSupplier relativeTimeInMillisSupplier;
+    private volatile boolean globalOrdinalsEnabled;
+    private volatile TimeValue globalOrdinalsMaxAge;
 
     @SuppressWarnings("this-escape")
     @Inject
@@ -100,6 +111,11 @@ public class TransportFetchSearchShardInformationAction extends HandledTransport
         this.transportService = transportService;
         this.shardActionName = actionName + "[s]";
         this.nowSupplier = threadPool::absoluteTimeInMillis;
+        // must be the same clock as the one tracking global ordinals usage in ShardFieldData
+        this.relativeTimeInMillisSupplier = threadPool::relativeTimeInMillis;
+        clusterService.getClusterSettings()
+            .initializeAndWatch(GLOBAL_ORDINALS_ENABLED_SETTING, value -> this.globalOrdinalsEnabled = value);
+        clusterService.getClusterSettings().initializeAndWatch(GLOBAL_ORDINALS_MAX_AGE_SETTING, value -> this.globalOrdinalsMaxAge = value);
         transportService.registerRequestHandler(
             shardActionName,
             threadPool.generic(),
@@ -176,8 +192,17 @@ public class TransportFetchSearchShardInformationAction extends HandledTransport
                 return 0L;
             });
 
-            return new Response(lastSearcherAcquired);
+            return new Response(lastSearcherAcquired, recentlyUsedGlobalOrdinalsFields(indexShard));
         });
+    }
+
+    private Set<String> recentlyUsedGlobalOrdinalsFields(IndexShard indexShard) {
+        final TimeValue maxAge = globalOrdinalsMaxAge;
+        if (globalOrdinalsEnabled == false || maxAge.millis() <= 0) {
+            return Set.of();
+        }
+        // filtering happens on this node, so that only field names and no node-local relative timestamps are sent across the wire
+        return indexShard.fieldData().globalOrdinalsFieldsAccessedSince(relativeTimeInMillisSupplier.getAsLong() - maxAge.millis());
     }
 
     // visible for testing
@@ -267,35 +292,66 @@ public class TransportFetchSearchShardInformationAction extends HandledTransport
 
     public static final class Response extends ActionResponse {
 
+        static final TransportVersion SEARCH_SHARD_INFORMATION_GLOBAL_ORDINALS_FIELDS = TransportVersion.fromName(
+            "search_shard_information_global_ordinals_fields"
+        );
+
         private final long lastSearcherAcquiredTime;
+        private final Set<String> globalOrdinalsFields;
 
         public Response(long lastSearcherAcquiredTime) {
+            this(lastSearcherAcquiredTime, Set.of());
+        }
+
+        public Response(long lastSearcherAcquiredTime, Set<String> globalOrdinalsFields) {
             this.lastSearcherAcquiredTime = lastSearcherAcquiredTime;
+            this.globalOrdinalsFields = Set.copyOf(globalOrdinalsFields);
         }
 
         public Response(StreamInput in) throws IOException {
             lastSearcherAcquiredTime = in.readZLong();
+            if (in.getTransportVersion().supports(SEARCH_SHARD_INFORMATION_GLOBAL_ORDINALS_FIELDS)) {
+                globalOrdinalsFields = in.readCollectionAsImmutableSet(StreamInput::readString);
+            } else {
+                globalOrdinalsFields = Set.of();
+            }
         }
 
         public long getLastSearcherAcquiredTime() {
             return lastSearcherAcquiredTime;
         }
 
+        /**
+         * @return the names of the fields whose global ordinals have recently been used on the shard copy that answered the request
+         */
+        public Set<String> getGlobalOrdinalsFields() {
+            return globalOrdinalsFields;
+        }
+
         @Override
         public void writeTo(StreamOutput out) throws IOException {
             out.writeZLong(lastSearcherAcquiredTime);
+            if (out.getTransportVersion().supports(SEARCH_SHARD_INFORMATION_GLOBAL_ORDINALS_FIELDS)) {
+                out.writeStringCollection(globalOrdinalsFields);
+            }
         }
 
         @Override
         public boolean equals(Object o) {
             if (o == null || getClass() != o.getClass()) return false;
             Response response = (Response) o;
-            return Objects.equals(lastSearcherAcquiredTime, response.lastSearcherAcquiredTime);
+            return lastSearcherAcquiredTime == response.lastSearcherAcquiredTime
+                && Objects.equals(globalOrdinalsFields, response.globalOrdinalsFields);
         }
 
         @Override
         public int hashCode() {
-            return Objects.hash(lastSearcherAcquiredTime);
+            return Objects.hash(lastSearcherAcquiredTime, globalOrdinalsFields);
+        }
+
+        @Override
+        public String toString() {
+            return "Response{lastSearcherAcquiredTime=" + lastSearcherAcquiredTime + ", globalOrdinalsFields=" + globalOrdinalsFields + '}';
         }
     }
 }

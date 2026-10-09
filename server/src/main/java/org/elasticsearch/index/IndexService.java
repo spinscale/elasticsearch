@@ -1011,6 +1011,16 @@ public class IndexService extends AbstractIndexComponent implements IndicesClust
         }
 
         @Override
+        public void onGlobalOrdinalsAccess(ShardId shardId, String fieldName) {
+            if (shardId != null) {
+                final IndexShard shard = indexService.getShardOrNull(shardId.id());
+                if (shard != null) {
+                    shard.fieldData().onGlobalOrdinalsAccess(shardId, fieldName);
+                }
+            }
+        }
+
+        @Override
         public void onRemoval(ShardId shardId, String fieldName, boolean wasEvicted, long sizeInBytes) {
             if (shardId != null) {
                 final IndexShard shard = indexService.getShardOrNull(shardId.id());

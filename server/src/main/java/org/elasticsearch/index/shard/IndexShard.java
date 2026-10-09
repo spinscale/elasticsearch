@@ -423,7 +423,7 @@ public class IndexShard extends AbstractIndexShardComponent implements IndicesCl
         this.getService = new ShardGetService(indexSettings, this, mapperService, mapperMetrics);
         this.shardWarmerService = new ShardIndexWarmerService(shardId, indexSettings);
         this.requestCacheStats = new ShardRequestCache();
-        this.shardFieldData = new ShardFieldData();
+        this.shardFieldData = new ShardFieldData(threadPool::relativeTimeInMillis);
         this.shardBitsetFilterCache = new ShardBitsetFilterCache(shardId, indexSettings);
         state = IndexShardState.CREATED;
         this.path = path;

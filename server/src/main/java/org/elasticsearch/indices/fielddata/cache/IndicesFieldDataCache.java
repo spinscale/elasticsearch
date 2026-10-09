@@ -187,6 +187,14 @@ public final class IndicesFieldDataCache implements RemovalListener<IndicesField
                 }
                 return (Accountable) ifd;
             });
+            for (Listener listener : listeners) {
+                try {
+                    listener.onGlobalOrdinalsAccess(shardId, fieldName);
+                } catch (Exception e) {
+                    // listeners should not throw exceptions
+                    logger.error("Failed to call listener on global ordinals access", e);
+                }
+            }
             return (IFD) accountable;
         }
 
