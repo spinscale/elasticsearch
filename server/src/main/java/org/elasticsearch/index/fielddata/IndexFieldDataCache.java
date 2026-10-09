@@ -26,6 +26,17 @@ public interface IndexFieldDataCache {
         throws Exception;
 
     /**
+     * Like {@link #load(DirectoryReader, IndexFieldData.Global)}, but without calling {@link Listener#onGlobalOrdinalsAccess}, for
+     * loading global ordinals ahead of searches.
+     */
+    default <FD extends LeafFieldData, IFD extends IndexFieldData.Global<FD>> IFD loadWithoutAccessNotification(
+        DirectoryReader indexReader,
+        IFD indexFieldData
+    ) throws Exception {
+        return load(indexReader, indexFieldData);
+    }
+
+    /**
      * Clears all the field data stored cached in on this index.
      */
     void clear();
@@ -45,7 +56,8 @@ public interface IndexFieldDataCache {
         default void onCache(ShardId shardId, String fieldName, GlobalOrdinalsAccounting info) {}
 
         /**
-         * Called every time global ordinals of a field are requested from the cache
+         * Called every time global ordinals of a field are requested from the cache, except through
+         * {@link IndexFieldDataCache#loadWithoutAccessNotification}
          */
         default void onGlobalOrdinalsAccess(ShardId shardId, String fieldName) {}
 

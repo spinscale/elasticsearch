@@ -511,7 +511,8 @@ public abstract class AbstractEngineTestCase extends ESTestCase {
             new SearchCommitPrefetcherDynamicSettings(clusterSettings),
             newReaderHeapBreaker(),
             StatelessReaderHeapMetrics.NOOP,
-            reshardSearchFilters
+            reshardSearchFilters,
+            newReaderWarmer()
         ) {
             @Override
             public void close() throws IOException {
@@ -523,6 +524,13 @@ public abstract class AbstractEngineTestCase extends ESTestCase {
                 }
             }
         };
+    }
+
+    /**
+     * The warmer search engines built in tests call for every new reader before exposing it. Does nothing by default.
+     */
+    protected Engine.Warmer newReaderWarmer() {
+        return reader -> {};
     }
 
     protected SearchEngine newSearchEngineFromIndexEngine(IndexEngine indexEngine, DeterministicTaskQueue deterministicTaskQueue)
@@ -685,7 +693,8 @@ public abstract class AbstractEngineTestCase extends ESTestCase {
             new SearchCommitPrefetcherDynamicSettings(clusterSettings),
             newReaderHeapBreaker(),
             StatelessReaderHeapMetrics.NOOP,
-            reshardSearchFilters
+            reshardSearchFilters,
+            newReaderWarmer()
         ) {
             @Override
             public void close() throws IOException {

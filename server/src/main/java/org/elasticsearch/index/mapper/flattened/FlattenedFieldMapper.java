@@ -1153,6 +1153,11 @@ public final class FlattenedFieldMapper extends FieldMapper implements PassThrou
         }
 
         @Override
+        public void warmGlobal(DirectoryReader indexReader) {
+            delegate.warmGlobal(indexReader);
+        }
+
+        @Override
         public IndexOrdinalsFieldData loadGlobalDirect(DirectoryReader indexReader) throws Exception {
             IndexOrdinalsFieldData fieldData = delegate.loadGlobalDirect(indexReader);
             return new KeyedFlattenedFieldData(key, fieldData, toScriptFieldFactory);

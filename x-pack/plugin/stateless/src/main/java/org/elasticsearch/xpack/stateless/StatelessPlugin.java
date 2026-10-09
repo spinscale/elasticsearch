@@ -225,6 +225,7 @@ import org.elasticsearch.xpack.stateless.recovery.TransportStatelessUnpromotable
 import org.elasticsearch.xpack.stateless.recovery.metering.StatelessPrimaryRelocationMetricsCollector;
 import org.elasticsearch.xpack.stateless.recovery.metering.StatelessRecoveryMetricsCollector;
 import org.elasticsearch.xpack.stateless.recovery.metering.StatelessSearchNodeRecoveryMetricsCollector;
+import org.elasticsearch.xpack.stateless.recovery.shardinfo.GlobalOrdinalsRefreshWarmer;
 import org.elasticsearch.xpack.stateless.recovery.shardinfo.GlobalOrdinalsWarmer;
 import org.elasticsearch.xpack.stateless.recovery.shardinfo.SearchShardInformationIndexListener;
 import org.elasticsearch.xpack.stateless.recovery.shardinfo.SearchShardInformationMetricsCollector;
@@ -550,6 +551,7 @@ public class StatelessPlugin extends Plugin
     private final SetOnce<IndexEngineDynamicSettings> indexEngineDynamicSettings = new SetOnce<>();
     private final SetOnce<ReshardSearchFilters> reshardSearchFilters = new SetOnce<>();
     private final SetOnce<SearchShardInformationIndexListener> searchShardInformationIndexListener = new SetOnce<>();
+    private final SetOnce<GlobalOrdinalsRefreshWarmer> globalOrdinalsRefreshWarmer = new SetOnce<>();
     private final SetOnce<PITRelocationService> pitRelocationService = new SetOnce<>();
     private final SetOnce<List<StatelessExtensionProvider>> statelessServicesConsumerProviders = new SetOnce<>();
     private final SetOnce<SnapshotsCommitService> snapshotsCommitServiceRef = new SetOnce<>();
@@ -1152,6 +1154,7 @@ public class StatelessPlugin extends Plugin
             SearchShardInformationMetricsCollector shardInformationMetricsCollector = new SearchShardInformationMetricsCollector(
                 services.telemetryProvider()
             );
+            final var globalOrdinalsWarmer = new GlobalOrdinalsWarmer(indicesService, threadPool.executor(ThreadPool.Names.WARMER));
             setAndGet(
                 this.searchShardInformationIndexListener,
                 new SearchShardInformationIndexListener(
@@ -1160,7 +1163,17 @@ public class StatelessPlugin extends Plugin
                     clusterService.getClusterSettings(),
                     threadPool.relativeTimeInMillisSupplier(),
                     threadPool,
-                    new GlobalOrdinalsWarmer(indicesService, threadPool.executor(ThreadPool.Names.WARMER))
+                    globalOrdinalsWarmer
+                )
+            );
+            setAndGet(
+                this.globalOrdinalsRefreshWarmer,
+                new GlobalOrdinalsRefreshWarmer(
+                    clusterService.getClusterSettings(),
+                    indicesService,
+                    globalOrdinalsWarmer,
+                    threadPool::relativeTimeInMillis,
+                    meterRegistry
                 )
             );
             final var shuttingDown = setAndGet(isNodeShuttingDown, new AtomicBoolean());
@@ -1533,6 +1546,8 @@ public class StatelessPlugin extends Plugin
             SearchShardInformationIndexListener.GLOBAL_ORDINALS_ENABLED_SETTING,
             SearchShardInformationIndexListener.GLOBAL_ORDINALS_MAX_AGE_SETTING,
             SearchShardInformationIndexListener.GLOBAL_ORDINALS_WARMING_TIMEOUT_SETTING,
+            GlobalOrdinalsRefreshWarmer.GLOBAL_ORDINALS_REFRESH_ENABLED_SETTING,
+            GlobalOrdinalsRefreshWarmer.GLOBAL_ORDINALS_REFRESH_WARMING_TIMEOUT_SETTING,
             StatelessSnapshotSettings.STATELESS_SNAPSHOT_ENABLED_SETTING,
             StatelessSnapshotSettings.RELOCATION_DURING_SNAPSHOT_ENABLED_SETTING,
             StatelessSnapshotSettings.STATELESS_SNAPSHOT_WAIT_FOR_ACTIVE_PRIMARY_TIMEOUT_SETTING,
@@ -1817,6 +1832,8 @@ public class StatelessPlugin extends Plugin
                 assert prefetchExecutor.get() != null : "Prefetch executor should be instantiated in search nodes";
                 assert prefetchingDynamicSettings.get() != null : "Prefetching dynamic settings should be instantiated in search nodes";
                 assert reshardSearchFilters.get() != null : "Reshard search filters should be instantiated in search nodes";
+                final GlobalOrdinalsRefreshWarmer refreshWarmer = globalOrdinalsRefreshWarmer.get();
+                assert refreshWarmer != null : "Global ordinals refresh warmer should be instantiated in search nodes";
                 return new SearchEngine(
                     config,
                     getClosedShardService(),
@@ -1826,7 +1843,8 @@ public class StatelessPlugin extends Plugin
                     prefetchingDynamicSettings.get(),
                     readerHeapBreaker.get(),
                     readerHeapMetrics.get(),
-                    reshardSearchFilters.get()
+                    reshardSearchFilters.get(),
+                    reader -> refreshWarmer.warmBeforeExposing(config.getShardId(), reader)
                 );
             }
         });

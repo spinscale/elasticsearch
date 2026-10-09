@@ -26,6 +26,15 @@ public interface IndexOrdinalsFieldData extends IndexFieldData.Global<LeafOrdina
     IndexOrdinalsFieldData loadGlobal(DirectoryReader indexReader);
 
     /**
+     * Loads the global ordinals for the given {@link IndexReader} into the cache ahead of searches, for instance to warm a reader before
+     * it is exposed. Unlike {@link #loadGlobal}, this is not reported as an access to the global ordinals through
+     * {@link IndexFieldDataCache.Listener#onGlobalOrdinalsAccess}, as no search is using them.
+     */
+    default void warmGlobal(DirectoryReader indexReader) {
+        loadGlobal(indexReader);
+    }
+
+    /**
      * Load a global view of the ordinals for the given {@link IndexReader}.
      */
     @Override

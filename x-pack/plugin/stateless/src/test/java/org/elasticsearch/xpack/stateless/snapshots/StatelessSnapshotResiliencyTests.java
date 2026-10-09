@@ -1218,7 +1218,8 @@ public class StatelessSnapshotResiliencyTests extends SnapshotResiliencyTests {
                         new SearchCommitPrefetcherDynamicSettings(clusterService.getClusterSettings()),
                         NoopCircuitBreaker.INSTANCE,
                         StatelessReaderHeapMetrics.NOOP,
-                        new ReshardSearchFilters(Settings.EMPTY)
+                        new ReshardSearchFilters(Settings.EMPTY),
+                        reader -> {}
                     );
                 }
             });

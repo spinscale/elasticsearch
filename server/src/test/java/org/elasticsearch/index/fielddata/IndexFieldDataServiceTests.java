@@ -48,6 +48,7 @@ import org.elasticsearch.test.IndexSettingsModule;
 import org.elasticsearch.test.InternalSettingsPlugin;
 import org.mockito.ArgumentMatchers;
 
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
@@ -272,22 +273,7 @@ public class IndexFieldDataServiceTests extends ESSingleNodeTestCase {
             indicesService.getCircuitBreakerService()
         );
 
-        final MapperBuilderContext context = MapperBuilderContext.root(false, false);
-        final MappedFieldType fieldType = new TextFieldMapper.Builder("s", defaultIndexSettings(), createDefaultIndexAnalyzers(), false)
-            .fielddata(true)
-            .build(context)
-            .fieldType();
-        final IndexWriter writer = new IndexWriter(
-            new ByteBuffersDirectory(),
-            new IndexWriterConfig(new KeywordAnalyzer()).setMergePolicy(NoMergePolicy.INSTANCE)
-        );
-        // global ordinals are only built and cached for readers with more than one segment
-        for (int i = 0; i < 2; i++) {
-            Document doc = new Document();
-            doc.add(new StringField("s", "value" + i, Store.NO));
-            writer.addDocument(doc);
-            writer.flush();
-        }
+        final IndexWriter writer = newTwoSegmentWriter();
         final ShardId shardId = new ShardId("test", "_na_", 1);
         final DirectoryReader reader = ElasticsearchDirectoryReader.wrap(DirectoryReader.open(writer), shardId);
         assertThat(reader.leaves().size(), equalTo(2));
@@ -307,7 +293,10 @@ public class IndexFieldDataServiceTests extends ESSingleNodeTestCase {
                 onGlobalOrdinalsAccess.incrementAndGet();
             }
         });
-        final IndexFieldData.Global<?> ifd = ifdService.getForField(fieldType, FieldDataContext.noRuntimeFields("test", "test"));
+        final IndexFieldData.Global<?> ifd = ifdService.getForField(
+            textFieldWithFielddata(),
+            FieldDataContext.noRuntimeFields("test", "test")
+        );
         final int accesses = randomIntBetween(1, 5);
         for (int i = 0; i < accesses; i++) {
             ifd.loadGlobal(reader);
@@ -318,6 +307,76 @@ public class IndexFieldDataServiceTests extends ESSingleNodeTestCase {
         reader.close();
         writer.close();
         ifdService.clear();
+    }
+
+    public void testWarmGlobalDoesNotNotifyAccess() throws Exception {
+        final IndexService indexService = createIndex("test");
+        final IndicesService indicesService = getInstanceFromNode(IndicesService.class);
+        // copy the ifdService since we can set the listener only once.
+        final IndexFieldDataService ifdService = new IndexFieldDataService(
+            indexService.getIndexSettings(),
+            indicesService.getIndicesFieldDataCache(),
+            indicesService.getCircuitBreakerService()
+        );
+        final IndexWriter writer = newTwoSegmentWriter();
+        final DirectoryReader reader = ElasticsearchDirectoryReader.wrap(DirectoryReader.open(writer), new ShardId("test", "_na_", 1));
+
+        final AtomicInteger onGlobalOrdinalsBuilt = new AtomicInteger();
+        final AtomicInteger onGlobalOrdinalsAccess = new AtomicInteger();
+        ifdService.setListener(new IndexFieldDataCache.Listener() {
+            @Override
+            public void onCache(ShardId shardId, String fieldName, GlobalOrdinalsAccounting info) {
+                onGlobalOrdinalsBuilt.incrementAndGet();
+            }
+
+            @Override
+            public void onGlobalOrdinalsAccess(ShardId shardId, String fieldName) {
+                onGlobalOrdinalsAccess.incrementAndGet();
+            }
+        });
+        final IndexOrdinalsFieldData ifd = ifdService.getForField(
+            textFieldWithFielddata(),
+            FieldDataContext.noRuntimeFields("test", "test")
+        );
+
+        final int warmings = randomIntBetween(1, 3);
+        for (int i = 0; i < warmings; i++) {
+            ifd.warmGlobal(reader);
+        }
+        assertEquals(1, onGlobalOrdinalsBuilt.get());
+        assertEquals(0, onGlobalOrdinalsAccess.get());
+
+        // searches use the warmed global ordinals instead of building them again
+        ifd.loadGlobal(reader);
+        assertEquals(1, onGlobalOrdinalsBuilt.get());
+        assertEquals(1, onGlobalOrdinalsAccess.get());
+
+        reader.close();
+        writer.close();
+        ifdService.clear();
+    }
+
+    /**
+     * Global ordinals are only built and cached for readers with more than one segment.
+     */
+    private static IndexWriter newTwoSegmentWriter() throws IOException {
+        final IndexWriter writer = new IndexWriter(
+            new ByteBuffersDirectory(),
+            new IndexWriterConfig(new KeywordAnalyzer()).setMergePolicy(NoMergePolicy.INSTANCE)
+        );
+        for (int i = 0; i < 2; i++) {
+            Document doc = new Document();
+            doc.add(new StringField("s", "value" + i, Store.NO));
+            writer.addDocument(doc);
+            writer.flush();
+        }
+        return writer;
+    }
+
+    private MappedFieldType textFieldWithFielddata() {
+        return new TextFieldMapper.Builder("s", defaultIndexSettings(), createDefaultIndexAnalyzers(), false).fielddata(true)
+            .build(MapperBuilderContext.root(false, false))
+            .fieldType();
     }
 
     public void testSetCacheListenerTwice() {

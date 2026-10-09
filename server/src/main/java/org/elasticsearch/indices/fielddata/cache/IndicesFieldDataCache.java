@@ -159,10 +159,26 @@ public final class IndicesFieldDataCache implements RemovalListener<IndicesField
         }
 
         @Override
-        @SuppressWarnings("unchecked")
         public <FD extends LeafFieldData, IFD extends IndexFieldData.Global<FD>> IFD load(
             final DirectoryReader indexReader,
             final IFD indexFieldData
+        ) throws Exception {
+            return loadGlobal(indexReader, indexFieldData, true);
+        }
+
+        @Override
+        public <FD extends LeafFieldData, IFD extends IndexFieldData.Global<FD>> IFD loadWithoutAccessNotification(
+            final DirectoryReader indexReader,
+            final IFD indexFieldData
+        ) throws Exception {
+            return loadGlobal(indexReader, indexFieldData, false);
+        }
+
+        @SuppressWarnings("unchecked")
+        private <FD extends LeafFieldData, IFD extends IndexFieldData.Global<FD>> IFD loadGlobal(
+            final DirectoryReader indexReader,
+            final IFD indexFieldData,
+            final boolean notifyAccess
         ) throws Exception {
             final ShardId shardId = ShardUtils.extractShardId(indexReader);
             final IndexReader.CacheHelper cacheHelper = indexReader.getReaderCacheHelper();
@@ -187,12 +203,14 @@ public final class IndicesFieldDataCache implements RemovalListener<IndicesField
                 }
                 return (Accountable) ifd;
             });
-            for (Listener listener : listeners) {
-                try {
-                    listener.onGlobalOrdinalsAccess(shardId, fieldName);
-                } catch (Exception e) {
-                    // listeners should not throw exceptions
-                    logger.error("Failed to call listener on global ordinals access", e);
+            if (notifyAccess) {
+                for (Listener listener : listeners) {
+                    try {
+                        listener.onGlobalOrdinalsAccess(shardId, fieldName);
+                    } catch (Exception e) {
+                        // listeners should not throw exceptions
+                        logger.error("Failed to call listener on global ordinals access", e);
+                    }
                 }
             }
             return (IFD) accountable;

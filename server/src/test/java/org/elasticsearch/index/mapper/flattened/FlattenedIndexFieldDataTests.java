@@ -67,11 +67,17 @@ public class FlattenedIndexFieldDataTests extends ESSingleNodeTestCase {
         MappedFieldType fieldType1 = fieldMapper.fieldType().getChildFieldType("key");
 
         AtomicInteger onCacheCalled = new AtomicInteger();
+        AtomicInteger onGlobalOrdinalsAccessCalled = new AtomicInteger();
         ifdService.setListener(new IndexFieldDataCache.Listener() {
             @Override
             public void onCache(ShardId shardId, String fieldName, Accountable ramUsage) {
                 assertEquals(fieldType1.name(), fieldName);
                 onCacheCalled.incrementAndGet();
+            }
+
+            @Override
+            public void onGlobalOrdinalsAccess(ShardId shardId, String fieldName) {
+                onGlobalOrdinalsAccessCalled.incrementAndGet();
             }
         });
 
@@ -93,8 +99,13 @@ public class FlattenedIndexFieldDataTests extends ESSingleNodeTestCase {
 
         KeyedFlattenedFieldData fieldData1 = (KeyedFlattenedFieldData) ifd1;
         assertEquals("key", fieldData1.getKey());
+        // warming builds the global field data of the root field without counting as an access
+        fieldData1.warmGlobal(reader);
+        assertEquals(1, onCacheCalled.get());
+        assertEquals(0, onGlobalOrdinalsAccessCalled.get());
         fieldData1.loadGlobal(reader);
         assertEquals(1, onCacheCalled.get());
+        assertEquals(1, onGlobalOrdinalsAccessCalled.get());
 
         // Load global field data for the subfield 'other_key'.
         MappedFieldType fieldType2 = fieldMapper.fieldType().getChildFieldType("other_key");

@@ -167,7 +167,12 @@ public class SearchEngine extends Engine {
     private final AtomicBoolean immediateRetryScheduled = new AtomicBoolean();
     private final AtomicLong refreshImmediateRetryCount = new AtomicLong();
     private final RelocatedPITReaderTracker relocatedPITReaderTracker;
+    private final Engine.Warmer newReaderWarmer;
 
+    /**
+     * @param newReaderWarmer called with every new reader opened by a refresh before the reader is exposed to searches, so it delays
+     *                        the refresh for as long as it runs
+     */
     @SuppressWarnings("this-escape")
     public SearchEngine(
         EngineConfig config,
@@ -178,11 +183,13 @@ public class SearchEngine extends Engine {
         SearchCommitPrefetcherDynamicSettings prefetcherDynamicSettings,
         CircuitBreaker readerHeapBreaker,
         StatelessReaderHeapMetrics readerHeapMetrics,
-        ReshardSearchFilters reshardSearchFilters
+        ReshardSearchFilters reshardSearchFilters,
+        Engine.Warmer newReaderWarmer
     ) {
         super(config);
         assert config.isPromotableToPrimary() == false;
         this.reshardSearchFilters = reshardSearchFilters;
+        this.newReaderWarmer = newReaderWarmer;
         this.closedShardService = closedShardService;
         this.readerHeapBreaker = readerHeapBreaker;
         var refreshExecutor = config.getThreadPool().executor(ThreadPool.Names.REFRESH);
@@ -293,6 +300,7 @@ public class SearchEngine extends Engine {
                             addNextReader(next, segmentInfosAndCommitCopy, indexCommit, reservation);
                             reservationOwned = true;
                             refreshDeferredPendingBytes.set(0L);
+                            warmNewReader(next);
                         }
                         previousSegmentInfosAndCommit = segmentInfosAndCommitCopy;
                         return next;
@@ -1197,6 +1205,15 @@ public class SearchEngine extends Engine {
     @Override
     protected ReferenceManager<ElasticsearchDirectoryReader> getReferenceManager(SearcherScope scope) {
         return readerManager;
+    }
+
+    private void warmNewReader(ElasticsearchDirectoryReader newReader) {
+        try {
+            newReaderWarmer.warm(newReader);
+        } catch (Exception e) {
+            // the reader is exposed regardless, searches load whatever the warmer failed to load on demand
+            logger.warn(() -> Strings.format("[%s] failed to warm new reader", shardId), e);
+        }
     }
 
     /**

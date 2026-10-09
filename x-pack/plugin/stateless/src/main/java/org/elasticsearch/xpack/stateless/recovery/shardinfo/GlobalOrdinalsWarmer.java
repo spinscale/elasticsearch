@@ -17,9 +17,11 @@ import org.elasticsearch.index.IndexService;
 import org.elasticsearch.index.engine.Engine;
 import org.elasticsearch.index.fielddata.FieldDataContext;
 import org.elasticsearch.index.fielddata.IndexFieldData;
+import org.elasticsearch.index.fielddata.IndexOrdinalsFieldData;
 import org.elasticsearch.index.mapper.MappedFieldType;
 import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.index.shard.IndexShardState;
+import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.logging.LogManager;
 import org.elasticsearch.logging.Logger;
@@ -28,15 +30,17 @@ import org.elasticsearch.xpack.stateless.engine.SearchEngine;
 import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BooleanSupplier;
 
 import static org.elasticsearch.core.Strings.format;
 
 /**
- * Builds the global ordinals of a set of fields on the current reader of a search shard.
+ * Builds the global ordinals of a set of fields on a reader of a search shard.
  *
- * Stateless search shards do not load eager global ordinals on refresh, so the first search on a freshly recovered shard copy that needs
- * global ordinals has to build them, and all concurrent searches needing them wait for that. Building the global ordinals that were in
- * use on another copy of the shard before the recovered copy starts avoids that penalty when shards move around in the cluster.
+ * Stateless search shards do not load eager global ordinals on refresh, so the first search on a freshly recovered shard copy or on a new
+ * reader that needs global ordinals has to build them, and all concurrent searches needing them wait for that. Building the global
+ * ordinals that were in use on another copy of the shard before the recovered copy starts, and the ones recently used on the shard before
+ * a new reader is exposed, avoids that penalty.
  */
 public class GlobalOrdinalsWarmer {
 
@@ -82,24 +86,68 @@ public class GlobalOrdinalsWarmer {
             return;
         }
 
+        // counts as usage on this shard copy, so that refreshes keep the fields inherited from the other copy warm until searches use them
+        warm(
+            indexShard.shardId(),
+            indexService,
+            searcher.getDirectoryReader(),
+            fieldNames,
+            true,
+            () -> false,
+            ActionListener.runBefore(listener, searcher::close)
+        );
+    }
+
+    /**
+     * Builds the global ordinals of the given fields on the given reader, for instance a reader that is not exposed to searches yet.
+     * Unlike searches, this does not count as usage of the global ordinals of these fields on the shard. Fields that are not mapped
+     * (anymore) or that cannot be loaded are skipped, so the listener is never completed exceptionally because of an individual field.
+     *
+     * @param abandoned once this returns true, the global ordinals of the fields that have not been started yet are not built anymore
+     * @param listener  completed with the number of fields whose global ordinals were built
+     */
+    public void warmReader(
+        ShardId shardId,
+        IndexService indexService,
+        DirectoryReader reader,
+        Set<String> fieldNames,
+        BooleanSupplier abandoned,
+        ActionListener<Integer> listener
+    ) {
+        warm(shardId, indexService, reader, fieldNames, false, abandoned, listener);
+    }
+
+    private void warm(
+        ShardId shardId,
+        IndexService indexService,
+        DirectoryReader reader,
+        Set<String> fieldNames,
+        boolean countAsUsage,
+        BooleanSupplier abandoned,
+        ActionListener<Integer> listener
+    ) {
         final AtomicInteger fieldsWarmed = new AtomicInteger();
-        try (var refs = new RefCountingRunnable(() -> ActionListener.completeWith(listener, () -> {
-            searcher.close();
-            return fieldsWarmed.get();
-        }))) {
+        try (var refs = new RefCountingRunnable(() -> listener.onResponse(fieldsWarmed.get()))) {
             for (String fieldName : fieldNames) {
                 final Releasable ref = refs.acquire();
                 executor.execute(new AbstractRunnable() {
                     @Override
-                    protected void doRun() {
-                        if (warmField(indexService, indexShard, fieldName, searcher.getDirectoryReader())) {
-                            fieldsWarmed.incrementAndGet();
+                    protected void doRun() throws Exception {
+                        if (abandoned.getAsBoolean() || reader.tryIncRef() == false) {
+                            return;
+                        }
+                        try {
+                            if (warmField(shardId, indexService, fieldName, reader, countAsUsage)) {
+                                fieldsWarmed.incrementAndGet();
+                            }
+                        } finally {
+                            reader.decRef();
                         }
                     }
 
                     @Override
                     public void onFailure(Exception e) {
-                        logger.warn(() -> format("%s failed to warm global ordinals for field [%s]", indexShard.shardId(), fieldName), e);
+                        logger.warn(() -> format("%s failed to warm global ordinals for field [%s]", shardId, fieldName), e);
                     }
 
                     @Override
@@ -111,21 +159,31 @@ public class GlobalOrdinalsWarmer {
         }
     }
 
-    private static boolean warmField(IndexService indexService, IndexShard indexShard, String fieldName, DirectoryReader reader) {
-        final MappedFieldType fieldType = indexShard.mapperService().fieldType(fieldName);
+    private static boolean warmField(
+        ShardId shardId,
+        IndexService indexService,
+        String fieldName,
+        DirectoryReader reader,
+        boolean countAsUsage
+    ) {
+        final MappedFieldType fieldType = indexService.mapperService().fieldType(fieldName);
         if (fieldType == null) {
             return false;
         }
         final long start = System.nanoTime();
         final IndexFieldData<?> fieldData = indexService.loadFielddata(
             fieldType,
-            FieldDataContext.noRuntimeFields(indexShard.shardId().getIndexName(), "global ordinals warming")
+            FieldDataContext.noRuntimeFields(shardId.getIndexName(), "global ordinals warming")
         );
-        if (fieldData instanceof IndexFieldData.Global<?> global) {
-            global.loadGlobal(reader);
+        if (fieldData instanceof IndexOrdinalsFieldData ordinalsFieldData) {
+            if (countAsUsage) {
+                ordinalsFieldData.loadGlobal(reader);
+            } else {
+                ordinalsFieldData.warmGlobal(reader);
+            }
             logger.trace(
                 "{} warmed global ordinals for field [{}], took [{}]",
-                indexShard.shardId(),
+                shardId,
                 fieldName,
                 TimeValue.timeValueNanos(System.nanoTime() - start)
             );

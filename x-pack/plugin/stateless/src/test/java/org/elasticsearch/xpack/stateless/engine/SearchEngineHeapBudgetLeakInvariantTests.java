@@ -73,7 +73,8 @@ public class SearchEngineHeapBudgetLeakInvariantTests extends AbstractEngineTest
             new SearchCommitPrefetcherDynamicSettings(clusterSettings),
             newReaderHeapBreaker(),
             StatelessReaderHeapMetrics.NOOP,
-            reshardSearchFilters
+            reshardSearchFilters,
+            newReaderWarmer()
         ) {
             @Override
             public void close() throws IOException {

@@ -168,6 +168,11 @@ public class ConstantIndexFieldData extends AbstractIndexOrdinalsFieldData {
     }
 
     @Override
+    public void warmGlobal(DirectoryReader indexReader) {
+        // there are no global ordinals to build for a constant value
+    }
+
+    @Override
     public IndexOrdinalsFieldData loadGlobalDirect(DirectoryReader indexReader) {
         return loadGlobal(indexReader);
     }

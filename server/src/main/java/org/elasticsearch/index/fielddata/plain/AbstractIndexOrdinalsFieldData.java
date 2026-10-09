@@ -99,19 +99,34 @@ public abstract class AbstractIndexOrdinalsFieldData implements IndexOrdinalsFie
         }
     }
 
+    @Override
+    public void warmGlobal(DirectoryReader indexReader) {
+        // nothing is cached in these cases, see loadGlobalInternal
+        if (indexReader.leaves().size() <= 1 || isFieldInAnySegment(indexReader) == false) {
+            return;
+        }
+        try {
+            cache.loadWithoutAccessNotification(indexReader, this);
+        } catch (Exception e) {
+            throw handleCacheLoadException(e);
+        }
+    }
+
+    private boolean isFieldInAnySegment(DirectoryReader indexReader) {
+        for (LeafReaderContext context : indexReader.leaves()) {
+            if (context.reader().getFieldInfos().fieldInfo(getFieldName()) != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private IndexOrdinalsFieldData loadGlobalInternal(DirectoryReader indexReader) {
         if (indexReader.leaves().size() <= 1) {
             // ordinals are already global
             return this;
         }
-        boolean fieldFound = false;
-        for (LeafReaderContext context : indexReader.leaves()) {
-            if (context.reader().getFieldInfos().fieldInfo(getFieldName()) != null) {
-                fieldFound = true;
-                break;
-            }
-        }
-        if (fieldFound == false) {
+        if (isFieldInAnySegment(indexReader) == false) {
             // Some directory readers may be wrapped and report different set of fields and use the same cache key.
             // If a field can't be found then it doesn't mean it isn't there,
             // so if a field doesn't exist then we don't cache it and just return an empty field data instance.

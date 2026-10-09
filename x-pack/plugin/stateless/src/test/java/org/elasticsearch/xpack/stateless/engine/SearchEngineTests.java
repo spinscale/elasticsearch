@@ -14,9 +14,11 @@ import org.apache.lucene.index.IndexFileNames;
 import org.apache.lucene.index.IndexFormatTooNewException;
 import org.apache.lucene.index.IndexFormatTooOldException;
 import org.apache.lucene.store.AlreadyClosedException;
+import org.apache.lucene.util.SetOnce;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.support.PlainActionFuture;
 import org.elasticsearch.cluster.routing.SplitShardCountSummary;
+import org.elasticsearch.common.lucene.index.ElasticsearchDirectoryReader;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
 import org.elasticsearch.common.util.concurrent.DeterministicTaskQueue;
@@ -65,6 +67,8 @@ import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.lessThan;
+import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.sameInstance;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
@@ -78,6 +82,13 @@ public class SearchEngineTests extends AbstractEngineTestCase {
     public String[] tmpPaths() {
         // cache requires a single data path
         return new String[] { createTempDir().toAbsolutePath().toString() };
+    }
+
+    private volatile Engine.Warmer testNewReaderWarmer = newReader -> {};
+
+    @Override
+    protected Engine.Warmer newReaderWarmer() {
+        return newReader -> testNewReaderWarmer.warm(newReader);
     }
 
     private static long getCurrentGeneration(SearchEngine engine) {
@@ -152,6 +163,76 @@ public class SearchEngineTests extends AbstractEngineTestCase {
             assertNotNull("expected shard field stats after commits processed", after);
             assertTrue("expected at least one segment after indexing/flushing", after.numSegments() >= 1);
             assertTrue("expected non-zero total fields after indexing", after.totalFields() > 0);
+        }
+        assertWarnings(
+            "[indices.merge.scheduler.use_thread_pool] setting was deprecated in Elasticsearch and will be removed in a future release. "
+                + "See the breaking changes documentation for the next major version."
+        );
+    }
+
+    public void testNewReaderIsWarmedBeforeBeingExposed() throws IOException {
+        final var indexConfig = indexConfig();
+        final var searchTaskQueue = new DeterministicTaskQueue();
+        final SetOnce<SearchEngine> searchEngineRef = new SetOnce<>();
+        final List<ElasticsearchDirectoryReader> warmedReaders = new ArrayList<>();
+        testNewReaderWarmer = newReader -> {
+            try (Searcher searcher = searchEngineRef.get().acquireSearcher("test")) {
+                assertThat(
+                    "searches must not see the new reader before it is warmed",
+                    searcher.getDirectoryReader().getIndexCommit().getGeneration(),
+                    lessThan(newReader.getIndexCommit().getGeneration())
+                );
+            } catch (IOException e) {
+                throw new AssertionError(e);
+            }
+            warmedReaders.add(newReader);
+        };
+
+        try (
+            var indexEngine = newIndexEngine(indexConfig);
+            var searchEngine = newSearchEngineFromIndexEngine(indexEngine, searchTaskQueue)
+        ) {
+            searchEngineRef.set(searchEngine);
+            for (int i = 0; i < 3; i++) {
+                indexEngine.index(randomDoc(String.valueOf(i)));
+                indexEngine.flush();
+            }
+            notifyCommits(indexEngine, searchEngine);
+            searchTaskQueue.runAllRunnableTasks();
+
+            assertThat(warmedReaders, not(empty()));
+            try (Searcher searcher = searchEngine.acquireSearcher("test")) {
+                // global ordinals are cached per reader cache key, so searches must use the very reader that was warmed
+                assertThat(
+                    searcher.getDirectoryReader().getReaderCacheHelper().getKey(),
+                    sameInstance(warmedReaders.getLast().getReaderCacheHelper().getKey())
+                );
+            }
+        }
+        assertWarnings(
+            "[indices.merge.scheduler.use_thread_pool] setting was deprecated in Elasticsearch and will be removed in a future release. "
+                + "See the breaking changes documentation for the next major version."
+        );
+    }
+
+    public void testNewReaderWarmerFailureDoesNotFailRefresh() throws IOException {
+        final var indexConfig = indexConfig();
+        final var searchTaskQueue = new DeterministicTaskQueue();
+        testNewReaderWarmer = newReader -> { throw new RuntimeException("simulated"); };
+
+        try (
+            var indexEngine = newIndexEngine(indexConfig);
+            var searchEngine = newSearchEngineFromIndexEngine(indexEngine, searchTaskQueue)
+        ) {
+            indexEngine.index(randomDoc("0"));
+            indexEngine.flush();
+            notifyCommits(indexEngine, searchEngine);
+            searchTaskQueue.runAllRunnableTasks();
+
+            assertThat(getCurrentGeneration(searchEngine), equalTo(indexEngine.getCurrentGeneration()));
+            try (Searcher searcher = searchEngine.acquireSearcher("test")) {
+                assertThat(searcher.getDirectoryReader().getIndexCommit().getGeneration(), equalTo(indexEngine.getCurrentGeneration()));
+            }
         }
         assertWarnings(
             "[indices.merge.scheduler.use_thread_pool] setting was deprecated in Elasticsearch and will be removed in a future release. "
