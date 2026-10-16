@@ -215,6 +215,43 @@ public class SearchEngineTests extends AbstractEngineTestCase {
         );
     }
 
+    /**
+     * The indexing tier waits for the commit notification listener when refreshing, so that refresh must also wait for the new reader
+     * of the search shard to be warmed, otherwise the first searches after the refresh would not benefit from the warming.
+     */
+    public void testCommitNotificationCompletesAfterNewReaderIsWarmed() throws IOException {
+        final var indexConfig = indexConfig();
+        final var searchTaskQueue = new DeterministicTaskQueue();
+        final PlainActionFuture<Void> commitsVisible = new PlainActionFuture<>();
+        final List<Boolean> commitsVisibleWhileWarming = new ArrayList<>();
+        testNewReaderWarmer = newReader -> commitsVisibleWhileWarming.add(commitsVisible.isDone());
+
+        try (
+            var indexEngine = newIndexEngine(indexConfig);
+            var searchEngine = newSearchEngineFromIndexEngine(indexEngine, searchTaskQueue)
+        ) {
+            for (int i = 0; i < 3; i++) {
+                indexEngine.index(randomDoc(String.valueOf(i)));
+                indexEngine.flush();
+            }
+            notifyCommits(indexEngine, searchEngine, commitsVisible);
+            searchTaskQueue.runAllRunnableTasks();
+
+            assertThat(commitsVisibleWhileWarming, not(empty()));
+            assertThat(
+                "commit notifications must not complete before the new reader is warmed",
+                commitsVisibleWhileWarming,
+                not(hasItem(true))
+            );
+            safeGet(commitsVisible);
+            assertThat(getCurrentGeneration(searchEngine), equalTo(indexEngine.getCurrentGeneration()));
+        }
+        assertWarnings(
+            "[indices.merge.scheduler.use_thread_pool] setting was deprecated in Elasticsearch and will be removed in a future release. "
+                + "See the breaking changes documentation for the next major version."
+        );
+    }
+
     public void testNewReaderWarmerFailureDoesNotFailRefresh() throws IOException {
         final var indexConfig = indexConfig();
         final var searchTaskQueue = new DeterministicTaskQueue();

@@ -16,6 +16,7 @@ import org.apache.lucene.index.MergePolicy;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.util.SetOnce;
 import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.support.RefCountingListener;
 import org.elasticsearch.blobcache.BlobCacheMetrics;
 import org.elasticsearch.blobcache.BlobCacheUtils;
 import org.elasticsearch.blobcache.shared.DefaultEvictionPolicy;
@@ -913,13 +914,23 @@ public abstract class AbstractEngineTestCase extends ESTestCase {
      * @return the number of new commits notifications
      */
     protected static int notifyCommits(IndexEngine indexEngine, SearchEngine searchEngine) {
+        return notifyCommits(indexEngine, searchEngine, ActionListener.noop());
+    }
+
+    /**
+     * Same as {@link #notifyCommits(IndexEngine, SearchEngine)}, completing {@code listener} once the search engine completed the
+     * listeners of all the commit notifications, i.e. once all the notified commits are visible to searches.
+     */
+    protected static int notifyCommits(IndexEngine indexEngine, SearchEngine searchEngine, ActionListener<Void> listener) {
         var indexCommitListener = indexEngine.config().getIndexCommitListener();
         assertThat(indexCommitListener, instanceOf(CapturingIndexCommitListener.class));
 
         final List<NewCommitNotification> notifications = new ArrayList<>();
         final int count = ((CapturingIndexCommitListener) indexCommitListener).notifications.drainTo(notifications);
         Collections.shuffle(notifications, random());
-        notifications.forEach(notif -> searchEngine.onCommitNotification(notif, ActionListener.noop()));
+        try (var listeners = new RefCountingListener(listener)) {
+            notifications.forEach(notif -> searchEngine.onCommitNotification(notif, listeners.acquire()));
+        }
         return count;
     }
 }

@@ -171,7 +171,8 @@ public class SearchEngine extends Engine {
 
     /**
      * @param newReaderWarmer called with every new reader opened by a refresh before the reader is exposed to searches, so it delays
-     *                        the refresh for as long as it runs
+     *                        the refresh for as long as it runs. This also delays the completion of the commit notification that
+     *                        triggered the refresh, and therefore the refresh on the indexing shard that waits for it.
      */
     @SuppressWarnings("this-escape")
     public SearchEngine(
