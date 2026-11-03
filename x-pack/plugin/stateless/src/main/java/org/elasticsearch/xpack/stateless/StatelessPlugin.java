@@ -225,6 +225,9 @@ import org.elasticsearch.xpack.stateless.recovery.TransportStatelessUnpromotable
 import org.elasticsearch.xpack.stateless.recovery.metering.StatelessPrimaryRelocationMetricsCollector;
 import org.elasticsearch.xpack.stateless.recovery.metering.StatelessRecoveryMetricsCollector;
 import org.elasticsearch.xpack.stateless.recovery.metering.StatelessSearchNodeRecoveryMetricsCollector;
+import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueriesSettings;
+import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryMetrics;
+import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQuerySamplers;
 import org.elasticsearch.xpack.stateless.recovery.shardinfo.SearchShardInformationIndexListener;
 import org.elasticsearch.xpack.stateless.recovery.shardinfo.SearchShardInformationMetricsCollector;
 import org.elasticsearch.xpack.stateless.recovery.shardinfo.TransportFetchSearchShardInformationAction;
@@ -551,6 +554,8 @@ public class StatelessPlugin extends Plugin
     private final SetOnce<ReshardSearchFilters> reshardSearchFilters = new SetOnce<>();
     private final SetOnce<SearchShardInformationIndexListener> searchShardInformationIndexListener = new SetOnce<>();
     private final SetOnce<PITRelocationService> pitRelocationService = new SetOnce<>();
+    private final SetOnce<PhantomQueriesSettings> phantomQueriesSettings = new SetOnce<>();
+    private final SetOnce<PhantomQuerySamplers> phantomQuerySamplers = new SetOnce<>();
     private final SetOnce<List<StatelessExtensionProvider>> statelessServicesConsumerProviders = new SetOnce<>();
     private final SetOnce<SnapshotsCommitService> snapshotsCommitServiceRef = new SetOnce<>();
     private final SetOnce<StatelessMemoryMetricsService> statelessMemoryMetricsService = new SetOnce<>();
@@ -1139,6 +1144,21 @@ public class StatelessPlugin extends Plugin
         components.add(pitRelocationMetrics);
         var pitRelocationService = setAndGet(this.pitRelocationService, new PITRelocationService());
         components.add(pitRelocationService);
+        var phantomQueryMetrics = new PhantomQueryMetrics(meterRegistry);
+        components.add(phantomQueryMetrics);
+        var phantomQueriesSettings = setAndGet(
+            this.phantomQueriesSettings,
+            new PhantomQueriesSettings(clusterService.getClusterSettings())
+        );
+        components.add(phantomQueriesSettings);
+        var phantomQuerySamplers = setAndGet(
+            this.phantomQuerySamplers,
+            new PhantomQuerySamplers(threadPool, clusterService, phantomQueriesSettings, phantomQueryMetrics)
+        );
+        components.add(phantomQuerySamplers);
+        if (hasSearchRole) {
+            clusterService.addListener(phantomQuerySamplers);
+        }
 
         if (hasSearchRole) {
             setAndGet(this.prefetchExecutor, new SearchCommitPrefetcher.PrefetchExecutor(threadPool));
@@ -1239,6 +1259,14 @@ public class StatelessPlugin extends Plugin
 
     public StatelessSharedBlobCacheService getStatelessSharedBlobCacheService() {
         return Objects.requireNonNull(sharedBlobCacheService.get());
+    }
+
+    public PhantomQueriesSettings getPhantomQueriesSettings() {
+        return Objects.requireNonNull(phantomQueriesSettings.get());
+    }
+
+    public PhantomQuerySamplers getPhantomQuerySamplers() {
+        return Objects.requireNonNull(phantomQuerySamplers.get());
     }
 
     // Can be overridden by tests
@@ -1573,7 +1601,11 @@ public class StatelessPlugin extends Plugin
             RecoveryDirectCancellationService.ENABLE_DIRECT_RECOVERY_CANCELLATIONS_SETTING,
             RecoveryDirectCancellationService.ENABLE_DIRECT_CANCELLATIONS_FOR_SNAPSHOTS_SETTING,
             RecoveryGateMonitor.ENABLE_RECOVERY_GATES_SETTING,
-            RecoveryGateMonitor.RECHECK_INTERVAL_SETTING
+            RecoveryGateMonitor.RECHECK_INTERVAL_SETTING,
+            PhantomQueriesSettings.ENABLED_SETTING,
+            PhantomQueriesSettings.MAX_QUERIES_PER_SAMPLE_SETTING,
+            PhantomQueriesSettings.MAX_BYTES_PER_SAMPLE_SETTING,
+            PhantomQueriesSettings.MAX_BYTES_PER_NODE_SETTING
         );
     }
 
@@ -1662,6 +1694,7 @@ public class StatelessPlugin extends Plugin
             indexModule.addIndexEventListener(this.searchShardInformationIndexListener.get());
             indexModule.addIndexEventListener(this.pitRelocationService.get());
             indexModule.addIndexEventListener(this.sharedBlobCacheWarmingService.get().searchRecoveryWarmingWindows());
+            indexModule.addIndexEventListener(this.phantomQuerySamplers.get());
 
             final var searchIdxVersion = indexModule.indexSettings().getIndexVersionCreated();
             indexModule.setDirectoryWrapper((in, shardRouting) -> {

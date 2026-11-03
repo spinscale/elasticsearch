@@ -35,6 +35,7 @@ import org.elasticsearch.xpack.stateless.engine.StatelessReaderHeapBreaker;
 import org.elasticsearch.xpack.stateless.lucene.BlobStoreCacheDirectoryMetrics;
 import org.elasticsearch.xpack.stateless.lucene.FileCacheKey;
 import org.elasticsearch.xpack.stateless.recovery.TransportStatelessPrimaryRelocationAction;
+import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueriesSettings;
 
 import java.io.IOException;
 import java.util.List;
@@ -201,6 +202,11 @@ public class StatelessPluginTests extends ESTestCase {
     public void testAllDataNodeRecoveryThrottlingSettingsAreRegistered() {
         final var plugin = createStatelessPlugin(Settings.builder().put(STATELESS_ENABLED.getKey(), true).build());
         assertThat(plugin.getSettings(), hasItems(DataNodeRecoveryThrottlingSettings.settings().toArray(new Setting<?>[0])));
+    }
+
+    public void testAllPhantomQueriesSettingsAreRegistered() {
+        final var plugin = createStatelessPlugin(Settings.builder().put(STATELESS_ENABLED.getKey(), true).build());
+        assertThat(plugin.getSettings(), hasItems(PhantomQueriesSettings.settings().toArray(new Setting<?>[0])));
     }
 
     public void testEvictionPolicyFactoryIsInstalledOnTheCache() throws IOException {

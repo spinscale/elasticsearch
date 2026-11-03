@@ -9,6 +9,7 @@ import org.elasticsearch.action.search.OnlinePrewarmingServiceProvider;
 import org.elasticsearch.cluster.EstimatedHeapUsageCollector;
 import org.elasticsearch.cluster.metadata.TemplateDecoratorProvider;
 import org.elasticsearch.repositories.SnapshotShardContextFactory;
+import org.elasticsearch.search.ShardQueryRequestObserverProvider;
 import org.elasticsearch.xpack.stateless.memory.StatelessHeapUsageReader;
 import org.elasticsearch.xpack.stateless.snapshots.StatelessSnapshotShardContextFactory;
 import org.elasticsearch.xpack.stateless.templates.StatelessTemplateSettingsDecoratorProvider;
@@ -51,6 +52,7 @@ module org.elasticsearch.xpack.stateless {
     exports org.elasticsearch.xpack.stateless.templates to org.elasticsearch.server;
 
     provides OnlinePrewarmingServiceProvider with org.elasticsearch.xpack.stateless.cache.StatelessOnlinePrewarmingServiceProvider;
+    provides ShardQueryRequestObserverProvider with org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryRequestObserverProvider;
     provides SnapshotShardContextFactory with StatelessSnapshotShardContextFactory;
     provides TemplateDecoratorProvider with StatelessTemplateSettingsDecoratorProvider;
     provides EstimatedHeapUsageCollector with StatelessHeapUsageReader;
