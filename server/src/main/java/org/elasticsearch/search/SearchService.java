@@ -988,6 +988,109 @@ public class SearchService extends AbstractLifecycleComponent implements IndexEv
         }, ActionListener.wrap(result -> completionListenerRef.get().onResponse(result), e -> completionListenerRef.get().onFailure(e)));
     }
 
+    /**
+     * Runs the query phase of {@code request} on {@code searcherSupplier}, then the fetch phase for its top hits, to warm what they read,
+     * and discards the results. It has no externally visible effect: the reader context is not registered, no
+     * {@link SearchOperationListener} is called, the request cache is bypassed and the {@code search} pool is not used. The shard may
+     * still be {@code RECOVERING}.
+     * <p>
+     * A scroll or point-in-time request, and a query that needs remote work to be rewritten, fail with an
+     * {@link IllegalArgumentException}. A cancelled {@code task} fails with a {@link TaskCancelledException}. A query that the bottom sort
+     * values of the coordinating node let the shard skip does no work, as in a normal query phase.
+     * <p>
+     * Takes ownership of {@code request}, which is rewritten in place, so it must not be a request that is executed elsewhere, and of
+     * {@code searcherSupplier}, which is released before {@code listener} is notified, whatever the outcome.
+     */
+    public void executeQueryPhaseForWarming(
+        ShardSearchRequest request,
+        IndexShard shard,
+        Engine.SearcherSupplier searcherSupplier,
+        CancellableTask task,
+        Executor executor,
+        ActionListener<Void> listener
+    ) {
+        assert request.shardId().equals(shard.shardId()) : request.shardId() + " is not " + shard.shardId();
+        final ReaderContext unregisteredReaderContext;
+        try {
+            ensureNotScrollOrPointInTime(request);
+            unregisteredReaderContext = newUnregisteredReaderContext(shard, searcherSupplier, task);
+        } catch (Exception e) {
+            Releasables.closeWhileHandlingException(searcherSupplier);
+            listener.onFailure(e);
+            return;
+        }
+        final ActionListener<Void> listenerNotifiedAfterRelease = ActionListener.releaseBefore(unregisteredReaderContext, listener);
+        executor.execute(
+            ActionRunnable.run(listenerNotifiedAfterRelease, () -> executeQueryPhaseForWarming(request, unregisteredReaderContext, task))
+        );
+    }
+
+    private static void ensureNotScrollOrPointInTime(ShardSearchRequest request) {
+        if (request.scroll() != null || request.readerId() != null) {
+            throw new IllegalArgumentException(
+                "[" + request.shardId() + "] scroll and point-in-time requests cannot be executed for warming"
+            );
+        }
+    }
+
+    private ReaderContext newUnregisteredReaderContext(IndexShard shard, Engine.SearcherSupplier searcherSupplier, CancellableTask task) {
+        final var id = new ShardSearchContextId(sessionId, idGenerator.incrementAndGet(), searcherSupplier.getSearcherId());
+        final IndexService indexService = indicesService.indexServiceSafe(shard.shardId().getIndex());
+        final long noKeepAlive = -1L;
+        final boolean singleSession = true;
+        return new ReaderContext(id, indexService, shard, searcherSupplier, noKeepAlive, singleSession, creatorTaskIdOf(task));
+    }
+
+    private void executeQueryPhaseForWarming(ShardSearchRequest request, ReaderContext readerContext, CancellableTask task)
+        throws Exception {
+        checkCancelled(task);
+        rewriteInPlaceWithoutAsyncActions(request);
+        try (SearchContext context = createContextForWarming(readerContext, request, task)) {
+            context.getSearchExecutionContext().freezeContext();
+            QueryPhase.execute(context);
+            fetchTopHits(context, task);
+        } catch (Exception e) {
+            throw exposingTaskCancellation(e);
+        }
+    }
+
+    private void fetchTopHits(SearchContext context, CancellableTask task) {
+        final int[] topHitDocIds = shortcutDocIdsToLoad(context);
+        if (topHitDocIds.length == 0) {
+            return;
+        }
+        replaceQueryPhaseChecksWithCancellationCheck(context, task);
+        context.addFetchResult();
+        fetchPhase.execute(context, topHitDocIds, null);
+    }
+
+    private static void replaceQueryPhaseChecksWithCancellationCheck(SearchContext context, CancellableTask task) {
+        context.searcher().clearQueryCancellations();
+        context.searcher().addQueryCancellation(task::ensureNotCancelled);
+    }
+
+    private SearchContext createContextForWarming(ReaderContext readerContext, ShardSearchRequest request, CancellableTask task)
+        throws IOException {
+        final Executor noSliceExecutor = null;
+        final boolean lowLevelCancellationEnabled = true;
+        return createContext(readerContext, request, task, ResultsType.QUERY, true, noSliceExecutor, lowLevelCancellationEnabled);
+    }
+
+    private static Exception exposingTaskCancellation(Exception e) {
+        return ExceptionsHelper.unwrap(e, TaskCancelledException.class) instanceof TaskCancelledException cancelled ? cancelled : e;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void rewriteInPlaceWithoutAsyncActions(ShardSearchRequest request) throws IOException {
+        final QueryRewriteContext rewriteContext = indicesService.getDataRewriteContext(request::nowInMillis);
+        Rewriteable.rewrite(request.getRewriteable(), rewriteContext, false);
+        if (rewriteContext.hasAsyncActions()) {
+            throw new IllegalArgumentException(
+                "[" + request.shardId() + "] the query needs remote work to be rewritten, which warming does not do"
+            );
+        }
+    }
+
     private <T extends RefCounted> void ensureAfterSeqNoRefreshed(
         IndexShard shard,
         ShardSearchRequest request,
@@ -1991,8 +2094,27 @@ public class SearchService extends AbstractLifecycleComponent implements IndexEv
         ResultsType resultsType,
         boolean includeAggregations
     ) throws IOException {
+        return createContext(readerContext, request, task, resultsType, includeAggregations, searchExecutor, lowLevelCancellation);
+    }
+
+    private SearchContext createContext(
+        ReaderContext readerContext,
+        ShardSearchRequest request,
+        CancellableTask task,
+        ResultsType resultsType,
+        boolean includeAggregations,
+        @Nullable Executor sliceExecutor,
+        boolean lowLevelCancellationEnabled
+    ) throws IOException {
         checkCancelled(task);
-        final DefaultSearchContext context = createSearchContext(readerContext, request, defaultSearchTimeout, resultsType);
+        final DefaultSearchContext context = createSearchContext(
+            readerContext,
+            request,
+            defaultSearchTimeout,
+            resultsType,
+            sliceExecutor,
+            lowLevelCancellationEnabled
+        );
         resultsType.addResultsObject(context);
 
         // Release the memory used for query construction once the search context is closed.
@@ -2073,12 +2195,23 @@ public class SearchService extends AbstractLifecycleComponent implements IndexEv
         return searchContext;
     }
 
-    @SuppressWarnings("unchecked")
     private DefaultSearchContext createSearchContext(
         ReaderContext reader,
         ShardSearchRequest request,
         TimeValue timeout,
         ResultsType resultsType
+    ) throws IOException {
+        return createSearchContext(reader, request, timeout, resultsType, searchExecutor, lowLevelCancellation);
+    }
+
+    @SuppressWarnings("unchecked")
+    private DefaultSearchContext createSearchContext(
+        ReaderContext reader,
+        ShardSearchRequest request,
+        TimeValue timeout,
+        ResultsType resultsType,
+        @Nullable Executor sliceExecutor,
+        boolean lowLevelCancellationEnabled
     ) throws IOException {
         boolean success = false;
         DefaultSearchContext searchContext = null;
@@ -2095,8 +2228,8 @@ public class SearchService extends AbstractLifecycleComponent implements IndexEv
                 threadPool.relativeTimeInMillisSupplier(),
                 timeout,
                 fetchPhase,
-                lowLevelCancellation,
-                searchExecutor,
+                lowLevelCancellationEnabled,
+                sliceExecutor,
                 resultsType,
                 enableQueryPhaseParallelCollection,
                 minimumDocsPerSlice,

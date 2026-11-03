@@ -13,7 +13,11 @@ import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.core.config.Configurator;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.Query;
+import org.apache.lucene.search.QueryVisitor;
+import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.SortField;
+import org.apache.lucene.search.Weight;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.automaton.Automata;
 import org.apache.lucene.util.automaton.TooComplexToDeterminizeException;
@@ -27,6 +31,7 @@ import org.elasticsearch.action.search.OnlinePrewarmingService;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchScrollRequest;
 import org.elasticsearch.action.search.SearchShardTask;
+import org.elasticsearch.client.internal.Client;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.routing.SplitShardCountSummary;
 import org.elasticsearch.cluster.service.ClusterService;
@@ -34,19 +39,27 @@ import org.elasticsearch.common.UUIDs;
 import org.elasticsearch.common.breaker.CircuitBreaker;
 import org.elasticsearch.common.breaker.CircuitBreakingException;
 import org.elasticsearch.common.component.Lifecycle;
+import org.elasticsearch.common.io.stream.StreamOutput;
+import org.elasticsearch.common.lucene.search.Queries;
 import org.elasticsearch.common.regex.Regex;
 import org.elasticsearch.common.settings.ClusterSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.BigArrays;
+import org.elasticsearch.common.util.concurrent.AbstractRunnable;
 import org.elasticsearch.common.util.concurrent.EsRejectedExecutionException;
+import org.elasticsearch.core.CheckedConsumer;
+import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.IndexMode;
+import org.elasticsearch.index.IndexNotFoundException;
 import org.elasticsearch.index.IndexService;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.IndexVersion;
+import org.elasticsearch.index.cache.bitset.BitsetFilterCache;
 import org.elasticsearch.index.engine.Engine;
 import org.elasticsearch.index.fielddata.FieldDataContext;
 import org.elasticsearch.index.fielddata.IndexFieldData;
+import org.elasticsearch.index.fielddata.IndexFieldDataCache;
 import org.elasticsearch.index.fielddata.LeafFieldData;
 import org.elasticsearch.index.mapper.DateFieldMapper;
 import org.elasticsearch.index.mapper.KeywordFieldMapper;
@@ -59,6 +72,8 @@ import org.elasticsearch.index.mapper.MappingLookup;
 import org.elasticsearch.index.mapper.MetadataFieldMapper;
 import org.elasticsearch.index.mapper.RootObjectMapper;
 import org.elasticsearch.index.query.BoolQueryBuilder;
+import org.elasticsearch.index.query.DataRewriteContext;
+import org.elasticsearch.index.query.LeafQueryBuilder;
 import org.elasticsearch.index.query.MatchAllQueryBuilder;
 import org.elasticsearch.index.query.MatchNoneQueryBuilder;
 import org.elasticsearch.index.query.QueryBuilder;
@@ -66,13 +81,22 @@ import org.elasticsearch.index.query.QueryRewriteContext;
 import org.elasticsearch.index.query.RangeQueryBuilder;
 import org.elasticsearch.index.query.SearchExecutionContext;
 import org.elasticsearch.index.query.SearchExecutionContextHelper;
+import org.elasticsearch.index.query.TermsQueryBuilder;
 import org.elasticsearch.index.query.WildcardQueryBuilder;
+import org.elasticsearch.index.search.stats.SearchStats;
+import org.elasticsearch.index.search.stats.ShardSearchStats;
+import org.elasticsearch.index.shard.IllegalIndexShardStateException;
 import org.elasticsearch.index.shard.IndexShard;
+import org.elasticsearch.index.shard.IndexShardState;
 import org.elasticsearch.index.shard.IndexShardTestCase;
+import org.elasticsearch.index.shard.SearchOperationListener;
 import org.elasticsearch.index.shard.ShardId;
+import org.elasticsearch.index.store.DirectoryMetrics;
 import org.elasticsearch.indices.EmptySystemIndices;
 import org.elasticsearch.indices.IndicesService;
+import org.elasticsearch.indices.TermsLookup;
 import org.elasticsearch.indices.breaker.CircuitBreakerMetrics;
+import org.elasticsearch.indices.breaker.CircuitBreakerService;
 import org.elasticsearch.indices.breaker.HierarchyCircuitBreakerService;
 import org.elasticsearch.indices.breaker.NoneCircuitBreakerService;
 import org.elasticsearch.rest.RestStatus;
@@ -80,15 +104,24 @@ import org.elasticsearch.script.ScriptCompiler;
 import org.elasticsearch.search.aggregations.support.ValuesSourceType;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.search.fetch.FetchPhase;
+import org.elasticsearch.search.fetch.FetchSubPhase;
+import org.elasticsearch.search.fetch.FetchSubPhaseProcessor;
 import org.elasticsearch.search.fetch.ShardFetchRequest;
+import org.elasticsearch.search.fetch.StoredFieldsSpec;
 import org.elasticsearch.search.fetch.chunk.FetchPhaseResponseChunk;
+import org.elasticsearch.search.fetch.subphase.FetchSourcePhase;
 import org.elasticsearch.search.internal.AliasFilter;
 import org.elasticsearch.search.internal.InternalScrollSearchRequest;
+import org.elasticsearch.search.internal.SearchContext;
 import org.elasticsearch.search.internal.ShardSearchContextId;
 import org.elasticsearch.search.internal.ShardSearchRequest;
+import org.elasticsearch.search.query.QueryPhase;
 import org.elasticsearch.search.sort.BucketedSort;
 import org.elasticsearch.search.sort.MinAndMax;
 import org.elasticsearch.search.sort.SortOrder;
+import org.elasticsearch.tasks.CancellableTask;
+import org.elasticsearch.tasks.TaskCancelHelper;
+import org.elasticsearch.tasks.TaskCancelledException;
 import org.elasticsearch.tasks.TaskManager;
 import org.elasticsearch.telemetry.metric.MeterRegistry;
 import org.elasticsearch.telemetry.tracing.Tracer;
@@ -96,6 +129,8 @@ import org.elasticsearch.test.ClusterServiceUtils;
 import org.elasticsearch.test.MockLog;
 import org.elasticsearch.threadpool.DefaultBuiltInExecutorBuilders;
 import org.elasticsearch.threadpool.ThreadPool;
+import org.elasticsearch.threadpool.ThreadPoolStats;
+import org.elasticsearch.xcontent.XContentBuilder;
 import org.elasticsearch.xcontent.XContentParserConfiguration;
 
 import java.io.IOException;
@@ -106,14 +141,19 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
+import java.util.function.Function;
+import java.util.function.LongSupplier;
 import java.util.function.Predicate;
 
 import static org.elasticsearch.common.Strings.format;
+import static org.elasticsearch.common.breaker.ChildMemoryCircuitBreaker.CATEGORY_FETCH;
 import static org.elasticsearch.common.util.concurrent.EsExecutors.DIRECT_EXECUTOR_SERVICE;
 import static org.elasticsearch.search.SearchService.isExecutorQueuedBeyondPrewarmingFactor;
 import static org.elasticsearch.search.SearchService.isTransientRejection;
@@ -121,14 +161,26 @@ import static org.elasticsearch.search.SearchService.wrapFailureListener;
 import static org.elasticsearch.search.SearchService.wrapListenerForErrorHandling;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.everyItem;
+import static org.hamcrest.Matchers.greaterThan;
+import static org.hamcrest.Matchers.hasKey;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.sameInstance;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.startsWith;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 public class SearchServiceTests extends IndexShardTestCase {
@@ -1078,5 +1130,679 @@ public class SearchServiceTests extends IndexShardTestCase {
 
     private static SearchShardTask newSearchShardTask() {
         return new SearchShardTask(123L, "", "", "", null, Collections.emptyMap());
+    }
+
+    public void testWarmingQueryPhaseHasNoSearchSideEffects() throws Exception {
+        final SearchOperationListener searchOperationListener = mock(SearchOperationListener.class);
+        final IndexShard shard = newStartedPrimaryWithThreeSegmentsOfTwoDocuments(List.of(searchOperationListener));
+        withFixture(shard, minimumOneDocumentPerSliceSettings(), fixture -> {
+            final AtomicInteger searches = new AtomicInteger();
+            final ShardSearchRequest request = newRequestCachingShardRequest(
+                shard.shardId(),
+                new MatchAllCallingBackOnSearchQueryBuilder(searches::incrementAndGet)
+            );
+            final long searchPoolTasksBefore = completedTasks(ThreadPool.Names.SEARCH);
+            final AtomicReference<String> executingThread = new AtomicReference<>();
+            final Executor warmer = recordingThreadName(threadPool.executor(ThreadPool.Names.WARMER), executingThread);
+
+            fixture.warm(request, fixture.newSearcherSupplier(), newSearchShardTask(), warmer);
+
+            assertThat(searches.get(), equalTo(1));
+            assertThat(executingThread.get(), containsString("[" + ThreadPool.Names.WARMER + "]"));
+            assertThat(fixture.searchService().getActiveContexts(), equalTo(0));
+            verifyNoInteractions(searchOperationListener);
+            verify(fixture.indicesService(), never()).loadIntoContext(any(), any(), any());
+            final SearchStats searchStats = shard.searchStats();
+            assertThat(searchStats.getTotal().getQueryCount(), equalTo(0L));
+            assertThat(searchStats.getTotal().getQueryCurrent(), equalTo(0L));
+            assertThat(searchStats.getTotal().getFetchCount(), equalTo(0L));
+            assertThat(searchStats.getTotal().getSearchLoadRate(), equalTo(0.0));
+            assertThat(searchStats.getOpenContexts(), equalTo(0L));
+            assertThat("the search pool ran nothing", completedTasks(ThreadPool.Names.SEARCH), equalTo(searchPoolTasksBefore));
+        });
+    }
+
+    public void testWarmingQueryPhaseSkipsTheShardWhenBottomSortValuesLetItSkip() throws Exception {
+        final IndexShard shard = newStartedPrimaryWithThreeSegmentsOfTwoDocuments(List.of());
+        withFixture(shard, Settings.EMPTY, fixture -> {
+            final AtomicInteger searches = new AtomicInteger();
+            final ShardSearchRequest request = newShardSearchRequest(
+                shard.shardId(),
+                new SearchRequest().allowPartialSearchResults(false)
+                    .source(
+                        new SearchSourceBuilder().query(new MatchAllCallingBackOnSearchQueryBuilder(searches::incrementAndGet))
+                            .sort("timestamp")
+                            .trackTotalHits(false)
+                    )
+            );
+            request.setBottomSortValues(bottomSortValuesBelowEveryTimestamp());
+
+            fixture.warm(request, fixture.newSearcherSupplier(), newSearchShardTask(), DIRECT_EXECUTOR_SERVICE);
+
+            assertThat(searches.get(), equalTo(0));
+            assertThat(fixture.fetchedSources(), empty());
+        });
+    }
+
+    public void testWarmingQueryPhaseFetchesTheTopHits() throws Exception {
+        final IndexShard shard = newStartedPrimaryWithThreeSegmentsOfTwoDocuments(List.of());
+        withFixture(shard, Settings.EMPTY, fixture -> {
+            final SearchRequest searchRequest = requestCachingSearchRequest(new MatchAllQueryBuilder());
+            searchRequest.source().from(1).size(2);
+
+            fixture.warm(
+                newShardSearchRequest(shard.shardId(), searchRequest),
+                fixture.newSearcherSupplier(),
+                newSearchShardTask(),
+                DIRECT_EXECUTOR_SERVICE
+            );
+
+            assertThat(fixture.fetchedSources(), hasSize(2));
+            assertThat(fixture.fetchedSources(), everyItem(hasKey("field")));
+        });
+    }
+
+    public void testWarmingQueryPhaseFetchesNothingForRequestWithoutHits() throws Exception {
+        final IndexShard shard = newStartedPrimaryWithThreeSegmentsOfTwoDocuments(List.of());
+        withFixture(shard, Settings.EMPTY, fixture -> {
+            final AtomicInteger searches = new AtomicInteger();
+            final SearchRequest searchRequest = requestCachingSearchRequest(
+                new MatchAllCallingBackOnSearchQueryBuilder(searches::incrementAndGet)
+            );
+            searchRequest.source().size(0);
+
+            fixture.warm(
+                newShardSearchRequest(shard.shardId(), searchRequest),
+                fixture.newSearcherSupplier(),
+                newSearchShardTask(),
+                DIRECT_EXECUTOR_SERVICE
+            );
+
+            assertThat(searches.get(), equalTo(1));
+            assertThat(fixture.fetchedSources(), empty());
+        });
+    }
+
+    public void testWarmingQueryPhaseGivesBackTheCircuitBreakerBytesOfTheFetch() throws Exception {
+        final IndexShard shard = newStartedPrimaryWithThreeSegmentsOfTwoDocuments(List.of());
+        withFixture(shard, Settings.EMPTY, fixture -> {
+            final long usedBefore = fixture.requestBreaker().getUsed();
+
+            fixture.warm(
+                newRequestCachingShardRequest(shard.shardId(), new MatchAllQueryBuilder()),
+                fixture.newSearcherSupplier(),
+                newSearchShardTask(),
+                DIRECT_EXECUTOR_SERVICE
+            );
+
+            assertThat(fixture.fetchedSources(), not(empty()));
+            verify(fixture.requestBreaker(), atLeastOnce()).addEstimateBytesAndMaybeBreak(anyLong(), startsWith(CATEGORY_FETCH));
+            assertThat(fixture.requestBreaker().getUsed(), equalTo(usedBefore));
+        });
+    }
+
+    public void testCancellingTheTaskWhileFetchingStopsWarmingQueryPhase() throws Exception {
+        final IndexShard shard = newStartedPrimaryWithThreeSegmentsOfTwoDocuments(List.of());
+        withFixture(shard, Settings.EMPTY, fixture -> {
+            final SearchShardTask task = newSearchShardTask();
+            fixture.afterEachFetchedHit().set(() -> TaskCancelHelper.cancel(task, "cancelled while fetching"));
+
+            fixture.warmExpectingFailure(
+                TaskCancelledException.class,
+                newRequestCachingShardRequest(shard.shardId(), new MatchAllQueryBuilder()),
+                fixture.newSearcherSupplier(),
+                task,
+                DIRECT_EXECUTOR_SERVICE
+            );
+
+            assertThat("the remaining hits were not fetched", fixture.fetchedSources(), hasSize(1));
+            assertThat(fixture.requestBreaker().getUsed(), equalTo(0L));
+            assertThat(fixture.searchService().getActiveContexts(), equalTo(0));
+        });
+    }
+
+    public void testNormalQueryPhaseHasTheSideEffectsThatWarmingHasNot() throws Exception {
+        final SearchOperationListener searchOperationListener = mock(SearchOperationListener.class);
+        final IndexShard shard = newStartedPrimaryWithThreeSegmentsOfTwoDocuments(List.of(searchOperationListener));
+        withFixture(shard, minimumOneDocumentPerSliceSettings(), fixture -> {
+            final AtomicInteger searches = new AtomicInteger();
+            final ShardSearchRequest request = newRequestCachingShardRequest(
+                shard.shardId(),
+                new MatchAllCallingBackOnSearchQueryBuilder(searches::incrementAndGet)
+            );
+            final long searchPoolTasksBefore = completedTasks(ThreadPool.Names.SEARCH);
+
+            safeAwait((ActionListener<SearchPhaseResult> l) -> fixture.searchService().executeQueryPhase(request, newSearchShardTask(), l));
+
+            assertThat(searches.get(), equalTo(1));
+            assertThat(shard.searchStats().getTotal().getQueryCount(), equalTo(1L));
+            verify(searchOperationListener).onPreQueryPhase(any());
+            verify(fixture.indicesService()).loadIntoContext(any(), any(), any());
+            assertBusy(() -> assertThat(completedTasks(ThreadPool.Names.SEARCH), greaterThan(searchPoolTasksBefore)));
+        });
+    }
+
+    public void testWarmingQueryPhaseOnRecoveringShardWithOpenEngine() throws Exception {
+        final IndexShard recovering = reinitShard(newStartedPrimaryWithThreeSegmentsOfTwoDocuments(List.of()));
+        withFixture(recovering, Settings.EMPTY, fixture -> {
+            recoverUpToOpenEngine(recovering);
+            assertThat(recovering.state(), equalTo(IndexShardState.RECOVERING));
+            assertFalse(recovering.isReadAllowed());
+            expectThrows(
+                IllegalIndexShardStateException.class,
+                () -> recovering.acquireExternalSearcherSupplier(SplitShardCountSummary.IRRELEVANT)
+            );
+            final AtomicInteger searches = new AtomicInteger();
+            final ShardSearchRequest request = newRequestCachingShardRequest(
+                recovering.shardId(),
+                new MatchAllCallingBackOnSearchQueryBuilder(searches::incrementAndGet)
+            );
+            final TrackedSearcherSupplier supplier = fixture.newSearcherSupplier();
+
+            fixture.warm(request, supplier, newSearchShardTask(), threadPool.executor(ThreadPool.Names.WARMER));
+
+            assertThat(searches.get(), equalTo(1));
+            assertThat(supplier.acquired.get(), equalTo(1));
+            assertThat(fixture.searchService().getActiveContexts(), equalTo(0));
+            assertThat(recovering.state(), equalTo(IndexShardState.RECOVERING));
+            assertThat(recovering.searchStats().getTotal().getQueryCount(), equalTo(0L));
+        });
+    }
+
+    public void testWarmingQueryPhaseFailsFastWhenRewritingNeedsRemoteWork() throws Exception {
+        final SearchOperationListener searchOperationListener = mock(SearchOperationListener.class);
+        final IndexShard shard = newStartedPrimaryWithThreeSegmentsOfTwoDocuments(List.of(searchOperationListener));
+        withFixture(shard, Settings.EMPTY, fixture -> {
+            final ShardSearchRequest request = newRequestCachingShardRequest(
+                shard.shardId(),
+                new TermsQueryBuilder("field", new TermsLookup("other-index", "doc", "terms"))
+            );
+            final TrackedSearcherSupplier supplier = fixture.newSearcherSupplier();
+
+            final IllegalArgumentException failure = fixture.warmExpectingFailure(
+                IllegalArgumentException.class,
+                request,
+                supplier,
+                newSearchShardTask(),
+                DIRECT_EXECUTOR_SERVICE
+            );
+
+            assertThat(failure.getMessage(), containsString(shard.shardId().toString()));
+            assertThat(failure.getMessage(), containsString("needs remote work"));
+            verifyNoInteractions(fixture.client());
+            assertThat("the data of the shard was not read", supplier.acquired.get(), equalTo(0));
+            assertThat(fixture.searchService().getActiveContexts(), equalTo(0));
+            verifyNoInteractions(searchOperationListener);
+        });
+    }
+
+    public void testCancellingTheTaskWhileSearchingStopsWarmingQueryPhaseEvenWithLowLevelCancellationDisabled() throws Exception {
+        final Settings lowLevelCancellationDisabled = Settings.builder()
+            .put(SearchService.LOW_LEVEL_CANCELLATION_SETTING.getKey(), false)
+            .build();
+        final IndexShard shard = newStartedPrimaryWithThreeSegmentsOfTwoDocuments(List.of());
+        withFixture(shard, lowLevelCancellationDisabled, fixture -> {
+            final SearchShardTask task = newSearchShardTask();
+            final AtomicInteger searches = new AtomicInteger();
+            final ShardSearchRequest request = newRequestCachingShardRequest(
+                shard.shardId(),
+                new MatchAllCallingBackOnSearchQueryBuilder(() -> {
+                    searches.incrementAndGet();
+                    TaskCancelHelper.cancel(task, "cancelled while searching");
+                })
+            );
+
+            final TaskCancelledException failure = fixture.warmExpectingFailure(
+                TaskCancelledException.class,
+                request,
+                fixture.newSearcherSupplier(),
+                task,
+                DIRECT_EXECUTOR_SERVICE
+            );
+
+            assertThat(failure.getMessage(), containsString("cancelled while searching"));
+            assertThat(searches.get(), equalTo(1));
+            assertThat(fixture.searchService().getActiveContexts(), equalTo(0));
+        });
+    }
+
+    public void testWarmingQueryPhaseDoesNotStartForCancelledTask() throws Exception {
+        final IndexShard shard = newStartedPrimaryWithThreeSegmentsOfTwoDocuments(List.of());
+        withFixture(shard, Settings.EMPTY, fixture -> {
+            final SearchShardTask cancelledTask = newSearchShardTask();
+            TaskCancelHelper.cancel(cancelledTask, "cancelled before starting");
+            final AtomicInteger searches = new AtomicInteger();
+            final ShardSearchRequest request = newRequestCachingShardRequest(
+                shard.shardId(),
+                new MatchAllCallingBackOnSearchQueryBuilder(searches::incrementAndGet)
+            );
+
+            fixture.warmExpectingFailure(
+                TaskCancelledException.class,
+                request,
+                fixture.newSearcherSupplier(),
+                cancelledTask,
+                DIRECT_EXECUTOR_SERVICE
+            );
+
+            assertThat(searches.get(), equalTo(0));
+        });
+    }
+
+    public void testWarmingQueryPhaseRejectedByExecutorReleasesTheSearcher() throws Exception {
+        final IndexShard shard = newStartedPrimaryWithThreeSegmentsOfTwoDocuments(List.of());
+        withFixture(shard, Settings.EMPTY, fixture -> {
+            final AtomicInteger searches = new AtomicInteger();
+            final ShardSearchRequest request = newRequestCachingShardRequest(
+                shard.shardId(),
+                new MatchAllCallingBackOnSearchQueryBuilder(searches::incrementAndGet)
+            );
+            final Executor rejectingExecutor = command -> ((AbstractRunnable) command).onRejection(
+                new EsRejectedExecutionException("test")
+            );
+
+            fixture.warmExpectingFailure(
+                EsRejectedExecutionException.class,
+                request,
+                fixture.newSearcherSupplier(),
+                newSearchShardTask(),
+                rejectingExecutor
+            );
+
+            assertThat(searches.get(), equalTo(0));
+        });
+    }
+
+    public void testWarmingQueryPhaseOfScrollRequestFailsAndReleasesTheSearcher() throws Exception {
+        final IndexShard shard = newStartedPrimaryWithThreeSegmentsOfTwoDocuments(List.of());
+        withFixture(shard, Settings.EMPTY, fixture -> {
+            final ShardSearchRequest scrollRequest = newShardSearchRequest(
+                shard.shardId(),
+                requestCachingSearchRequest(new MatchAllQueryBuilder()).scroll(TimeValue.timeValueMinutes(1))
+            );
+
+            final IllegalArgumentException failure = fixture.warmExpectingFailure(
+                IllegalArgumentException.class,
+                scrollRequest,
+                fixture.newSearcherSupplier(),
+                newSearchShardTask(),
+                DIRECT_EXECUTOR_SERVICE
+            );
+
+            assertThat(failure.getMessage(), containsString("scroll and point-in-time"));
+        });
+    }
+
+    public void testWarmingQueryPhaseOfPointInTimeRequestFailsAndReleasesTheSearcher() throws Exception {
+        final IndexShard shard = newStartedPrimaryWithThreeSegmentsOfTwoDocuments(List.of());
+        withFixture(shard, Settings.EMPTY, fixture -> {
+            final ShardSearchRequest pointInTimeRequest = new ShardSearchRequest(
+                OriginalIndices.NONE,
+                requestCachingSearchRequest(new MatchAllQueryBuilder()),
+                shard.shardId(),
+                0,
+                5,
+                AliasFilter.EMPTY,
+                1.0f,
+                0,
+                null,
+                new ShardSearchContextId(UUIDs.randomBase64UUID(), randomNonNegativeLong()),
+                null,
+                SplitShardCountSummary.UNSET,
+                true
+            );
+
+            final IllegalArgumentException failure = fixture.warmExpectingFailure(
+                IllegalArgumentException.class,
+                pointInTimeRequest,
+                fixture.newSearcherSupplier(),
+                newSearchShardTask(),
+                DIRECT_EXECUTOR_SERVICE
+            );
+
+            assertThat(failure.getMessage(), containsString("scroll and point-in-time"));
+        });
+    }
+
+    public void testWarmingQueryPhaseOfRemovedIndexFailsAndReleasesTheSearcher() throws Exception {
+        final IndexShard shard = newStartedPrimaryWithThreeSegmentsOfTwoDocuments(List.of());
+        withFixture(shard, Settings.EMPTY, fixture -> {
+            when(fixture.indicesService().indexServiceSafe(any(Index.class))).thenThrow(new IndexNotFoundException("removed"));
+
+            fixture.warmExpectingFailure(
+                IndexNotFoundException.class,
+                newRequestCachingShardRequest(shard.shardId(), new MatchAllQueryBuilder()),
+                fixture.newSearcherSupplier(),
+                newSearchShardTask(),
+                DIRECT_EXECUTOR_SERVICE
+            );
+        });
+    }
+
+    private static final class MatchAllCallingBackOnSearchQueryBuilder extends LeafQueryBuilder<MatchAllCallingBackOnSearchQueryBuilder> {
+        private final Runnable onSearch;
+
+        MatchAllCallingBackOnSearchQueryBuilder(Runnable onSearch) {
+            this.onSearch = onSearch;
+        }
+
+        @Override
+        protected Query doToQuery(SearchExecutionContext context) {
+            return new Query() {
+                @Override
+                public Weight createWeight(IndexSearcher searcher, ScoreMode scoreMode, float boost) throws IOException {
+                    onSearch.run();
+                    return Queries.ALL_DOCS_INSTANCE.createWeight(searcher, scoreMode, boost);
+                }
+
+                @Override
+                public String toString(String field) {
+                    return getWriteableName();
+                }
+
+                @Override
+                public void visit(QueryVisitor visitor) {
+                    visitor.visitLeaf(this);
+                }
+
+                @Override
+                public boolean equals(Object obj) {
+                    return this == obj;
+                }
+
+                @Override
+                public int hashCode() {
+                    return System.identityHashCode(this);
+                }
+            };
+        }
+
+        @Override
+        protected void doWriteTo(StreamOutput out) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        protected void doXContent(XContentBuilder builder, Params params) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        protected boolean doEquals(MatchAllCallingBackOnSearchQueryBuilder other) {
+            return this == other;
+        }
+
+        @Override
+        protected int doHashCode() {
+            return System.identityHashCode(this);
+        }
+
+        @Override
+        public String getWriteableName() {
+            return "match_all_calling_back_on_search";
+        }
+
+        @Override
+        public TransportVersion getMinimalSupportedVersion() {
+            return TransportVersion.zero();
+        }
+    }
+
+    private static final class TrackedSearcherSupplier extends Engine.SearcherSupplier {
+        private final Engine.SearcherSupplier delegate;
+        final AtomicInteger acquired = new AtomicInteger();
+        final AtomicBoolean closed = new AtomicBoolean();
+        private final AtomicReference<Boolean> closedWhenListenerWasNotified = new AtomicReference<>();
+
+        TrackedSearcherSupplier(Engine.SearcherSupplier delegate) {
+            super(Function.identity());
+            this.delegate = delegate;
+        }
+
+        @Override
+        protected void doClose() {
+            closed.set(true);
+            delegate.close();
+        }
+
+        @Override
+        protected Engine.Searcher acquireSearcherInternal(String source) {
+            acquired.incrementAndGet();
+            return delegate.acquireSearcher(source);
+        }
+
+        @Override
+        public String getSearcherId() {
+            return delegate.getSearcherId();
+        }
+
+        <T> ActionListener<T> releaseCheckingListener(ActionListener<T> delegate) {
+            return ActionListener.runBefore(delegate, () -> closedWhenListenerWasNotified.set(closed.get()));
+        }
+
+        void assertReleasedBeforeListenerWasNotified() {
+            assertThat("the searcher is released before the listener is notified", closedWhenListenerWasNotified.get(), equalTo(true));
+        }
+    }
+
+    private record WarmingFixture(
+        SearchService searchService,
+        IndicesService indicesService,
+        Client client,
+        IndexShard shard,
+        CircuitBreaker requestBreaker,
+        List<Map<String, Object>> fetchedSources,
+        AtomicReference<Runnable> afterEachFetchedHit
+    ) {
+
+        TrackedSearcherSupplier newSearcherSupplier() {
+            return new TrackedSearcherSupplier(acquireSearcherSupplierFromEngine(shard));
+        }
+
+        void warm(ShardSearchRequest request, TrackedSearcherSupplier supplier, CancellableTask task, Executor executor) {
+            safeAwait(
+                (ActionListener<Void> l) -> searchService.executeQueryPhaseForWarming(
+                    request,
+                    shard,
+                    supplier,
+                    task,
+                    executor,
+                    supplier.releaseCheckingListener(l)
+                )
+            );
+            supplier.assertReleasedBeforeListenerWasNotified();
+        }
+
+        <E extends Exception> E warmExpectingFailure(
+            Class<E> exceptionType,
+            ShardSearchRequest request,
+            TrackedSearcherSupplier supplier,
+            CancellableTask task,
+            Executor executor
+        ) {
+            final E failure = safeAwaitFailure(
+                exceptionType,
+                Void.class,
+                l -> searchService.executeQueryPhaseForWarming(
+                    request,
+                    shard,
+                    supplier,
+                    task,
+                    executor,
+                    supplier.releaseCheckingListener(l)
+                )
+            );
+            supplier.assertReleasedBeforeListenerWasNotified();
+            return failure;
+        }
+    }
+
+    private void withFixture(IndexShard shard, Settings nodeSettings, CheckedConsumer<WarmingFixture, Exception> test) throws Exception {
+        try (ClusterService clusterService = ClusterServiceUtils.createClusterService(threadPool, nodeSettings)) {
+            final WarmingFixture fixture = newFixtureWithMockedNodeServices(clusterService, shard);
+            try {
+                test.accept(fixture);
+            } finally {
+                fixture.searchService().close();
+            }
+        } finally {
+            closeShards(shard);
+        }
+    }
+
+    private WarmingFixture newFixtureWithMockedNodeServices(ClusterService clusterService, IndexShard shard) throws Exception {
+        final Client client = mock(Client.class);
+        final CircuitBreaker requestBreaker = spy(createQueryConstructionBreaker("100mb"));
+        final CircuitBreakerService circuitBreakerService = mock(CircuitBreakerService.class);
+        when(circuitBreakerService.getBreaker(CircuitBreaker.REQUEST)).thenReturn(requestBreaker);
+        final List<Map<String, Object>> fetchedSources = Collections.synchronizedList(new ArrayList<>());
+        final AtomicReference<Runnable> afterEachFetchedHit = new AtomicReference<>(() -> {});
+        final BitsetFilterCache bitsetFilterCache = new BitsetFilterCache(shard.indexSettings(), BitsetFilterCache.Listener.NOOP);
+        final IndexService indexService = mock(IndexService.class);
+        when(indexService.breakerService()).thenReturn(circuitBreakerService);
+        when(indexService.getShard(anyInt())).thenReturn(shard);
+        when(indexService.index()).thenReturn(shard.shardId().getIndex());
+        when(indexService.getIndexSettings()).thenReturn(shard.indexSettings());
+        when(indexService.mapperService()).thenReturn(shard.mapperService());
+        when(indexService.newSearchExecutionContext(anyInt(), anyInt(), any(), any(), any(), any(), any(), any())).thenAnswer(
+            invocation -> new SearchExecutionContext(
+                invocation.<Integer>getArgument(0),
+                invocation.<Integer>getArgument(1),
+                shard.indexSettings(),
+                bitsetFilterCache,
+                (fieldType, fieldDataContext) -> fieldType.fielddataBuilder(fieldDataContext)
+                    .build(new IndexFieldDataCache.None(), new NoneCircuitBreakerService()),
+                shard.mapperService(),
+                shard.mapperService().mappingLookup(),
+                null,
+                null,
+                parserConfig(),
+                writableRegistry(),
+                null,
+                invocation.<IndexSearcher>getArgument(2),
+                invocation.<LongSupplier>getArgument(3),
+                invocation.<String>getArgument(4),
+                pattern -> Regex.simpleMatch(pattern, shard.shardId().getIndexName()),
+                () -> true,
+                null,
+                invocation.<Map<String, Object>>getArgument(5),
+                invocation.<Integer>getArgument(6),
+                MapperMetrics.NOOP,
+                invocation.<ShardSearchStats>getArgument(7)
+            )
+        );
+        final IndicesService indicesService = mock(IndicesService.class);
+        when(indicesService.indexServiceSafe(any(Index.class))).thenReturn(indexService);
+        when(indicesService.hasIndex(any(Index.class))).thenReturn(true);
+        when(indicesService.getDataRewriteContext(any())).thenAnswer(
+            invocation -> new DataRewriteContext(parserConfig(), client, invocation.<LongSupplier>getArgument(0))
+        );
+        when(indicesService.directoryMetricsDelta()).thenReturn(() -> DirectoryMetrics.EMPTY);
+        doAnswer(invocation -> {
+            QueryPhase.execute(invocation.<SearchContext>getArgument(1));
+            return null;
+        }).when(indicesService).loadIntoContext(any(), any(), any());
+        final SearchService searchService = new SearchService(
+            clusterService,
+            indicesService,
+            threadPool,
+            null,
+            BigArrays.NON_RECYCLING_INSTANCE,
+            new FetchPhase(List.of(new FetchSourcePhase(), recordingFetchedSources(fetchedSources, afterEachFetchedHit))),
+            circuitBreakerService,
+            EmptySystemIndices.INSTANCE.getExecutorSelector(),
+            Tracer.NOOP,
+            OnlinePrewarmingService.NOOP,
+            ShardQueryRequestObserver.NOOP,
+            new TaskManager(Settings.EMPTY, threadPool, Collections.emptySet())
+        );
+        return new WarmingFixture(searchService, indicesService, client, shard, requestBreaker, fetchedSources, afterEachFetchedHit);
+    }
+
+    private static SearchSortValuesAndFormats bottomSortValuesBelowEveryTimestamp() {
+        return new SearchSortValuesAndFormats(new Object[] { 0L }, new DocValueFormat[] { DocValueFormat.RAW });
+    }
+
+    private static FetchSubPhase recordingFetchedSources(List<Map<String, Object>> fetchedSources, AtomicReference<Runnable> afterEachHit) {
+        return fetchContext -> new FetchSubPhaseProcessor() {
+            @Override
+            public void setNextReader(LeafReaderContext readerContext) {}
+
+            @Override
+            public void process(FetchSubPhase.HitContext hitContext) {
+                fetchedSources.add(hitContext.source().source());
+                afterEachHit.get().run();
+            }
+
+            @Override
+            public StoredFieldsSpec storedFieldsSpec() {
+                return StoredFieldsSpec.NEEDS_SOURCE;
+            }
+        };
+    }
+
+    private static Settings minimumOneDocumentPerSliceSettings() {
+        return Settings.builder().put(SearchService.MINIMUM_DOCS_PER_SLICE.getKey(), 1).build();
+    }
+
+    private IndexShard newStartedPrimaryWithThreeSegmentsOfTwoDocuments(List<SearchOperationListener> searchOperationListeners)
+        throws IOException {
+        final IndexShard shard = newShard(true, searchOperationListeners);
+        recoverShardFromStore(shard);
+        for (int segment = 0; segment < 3; segment++) {
+            for (int doc = 0; doc < 2; doc++) {
+                final int docNumber = segment * 2 + doc;
+                final String source = "{\"field\":\"value-" + doc + "\",\"timestamp\":\"2025-01-0" + (docNumber + 1) + "\"}";
+                assertTrue(indexDoc(shard, "_doc", "id-" + docNumber, source).isCreated());
+            }
+            assertTrue(shard.refresh("test").refreshed());
+        }
+        return shard;
+    }
+
+    private void recoverUpToOpenEngine(IndexShard shard) {
+        shard.markAsRecovering("for testing");
+        shard.prepareForIndexRecovery();
+        shard.recoveryState().getIndex().setFileDetailsComplete();
+        safeAwait(shard::openEngineAndRecoverFromTranslog);
+        refreshExternalReaderOnceForInternalEngine(shard);
+    }
+
+    private static void refreshExternalReaderOnceForInternalEngine(IndexShard shard) {
+        shard.refresh("external_reader_refreshed_once_for_internal_engine");
+    }
+
+    private static Engine.SearcherSupplier acquireSearcherSupplierFromEngine(IndexShard shard) {
+        return shard.withEngine(
+            engine -> engine.acquireSearcherSupplier(Function.identity(), Engine.SearcherScope.EXTERNAL, SplitShardCountSummary.IRRELEVANT)
+        );
+    }
+
+    private static SearchRequest requestCachingSearchRequest(QueryBuilder query) {
+        return new SearchRequest().allowPartialSearchResults(false).requestCache(true).source(new SearchSourceBuilder().query(query));
+    }
+
+    private static ShardSearchRequest newShardSearchRequest(ShardId shardId, SearchRequest searchRequest) {
+        return new ShardSearchRequest(OriginalIndices.NONE, searchRequest, shardId, 0, 5, AliasFilter.EMPTY, 1.0f, 0, null);
+    }
+
+    private static ShardSearchRequest newRequestCachingShardRequest(ShardId shardId, QueryBuilder query) {
+        return newShardSearchRequest(shardId, requestCachingSearchRequest(query));
+    }
+
+    private static Executor recordingThreadName(Executor executor, AtomicReference<String> threadName) {
+        return command -> executor.execute(() -> {
+            threadName.set(Thread.currentThread().getName());
+            command.run();
+        });
+    }
+
+    private long completedTasks(String threadPoolName) {
+        for (ThreadPoolStats.Stats stats : threadPool.stats()) {
+            if (stats.name().equals(threadPoolName)) {
+                return stats.completed();
+            }
+        }
+        throw new AssertionError("no thread pool [" + threadPoolName + "]");
     }
 }
