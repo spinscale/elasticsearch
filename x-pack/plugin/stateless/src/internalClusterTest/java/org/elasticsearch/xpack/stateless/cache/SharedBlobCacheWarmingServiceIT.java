@@ -25,6 +25,8 @@ import org.elasticsearch.cluster.coordination.Coordinator;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.metadata.SingleNodeShutdownMetadata;
 import org.elasticsearch.cluster.routing.IndexShardRoutingTable;
+import org.elasticsearch.cluster.routing.ShardRouting;
+import org.elasticsearch.cluster.routing.ShardRoutingState;
 import org.elasticsearch.cluster.routing.allocation.decider.MaxRetryAllocationDecider;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.Strings;
@@ -99,6 +101,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -137,8 +140,10 @@ import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.everyItem;
 import static org.hamcrest.Matchers.greaterThan;
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.lessThanOrEqualTo;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -825,6 +830,82 @@ public class SharedBlobCacheWarmingServiceIT extends AbstractStatelessPluginInte
         final var evaluationsPerShard = evaluationsPerShard(warmingServiceOnTargetNode).values();
         assertThat(evaluationsPerShard, hasSize(greaterThan(0)));
         assertThat(evaluationsPerShard, everyItem(equalTo(1L)));
+    }
+
+    public void testSearchRecoveryWarmingWindowIsRemovedWhenTheRecoveryCompletes() throws Exception {
+        final var relocationTimeout = TimeValue.timeValueMinutes(1);
+        final var nodeSettings = Settings.builder()
+            .put(SharedBlobCacheService.SHARED_CACHE_SIZE_SETTING.getKey(), CACHE_SIZE.getStringRep())
+            .put(SharedBlobCacheService.SHARED_CACHE_REGION_SIZE_SETTING.getKey(), REGION_SIZE.getStringRep())
+            .put(SharedBlobCacheService.SHARED_CACHE_RANGE_SIZE_SETTING.getKey(), REGION_SIZE.getStringRep())
+            .put(STATELESS_SEARCH_USE_INTERNAL_FILES_REPLICATED_CONTENT.getKey(), true)
+            .put(SharedBlobCacheWarmingService.SEARCH_OFFLINE_WARMING_ENABLED_SETTING.getKey(), true)
+            .put(DefaultWarmingRatioProviderFactory.SEARCH_RECOVERY_WARMING_RATIO_SETTING.getKey(), 1.0d)
+            .put(SharedBlobCacheWarmingService.SEARCH_RECOVERY_WARMING_TIMEOUT_RELOCATION_SETTING.getKey(), relocationTimeout)
+            .put(disableIndexingDiskAndMemoryControllersNodeSettings())
+            .build();
+        startMasterAndIndexNode(nodeSettings);
+        final var sourceSearchNode = startSearchNode(nodeSettings);
+        ensureStableCluster(2);
+
+        final String indexName = randomIdentifier();
+        assertAcked(
+            prepareCreate(
+                indexName,
+                Settings.builder()
+                    .put(IndexMetadata.SETTING_NUMBER_OF_SHARDS, 1)
+                    .put(IndexMetadata.SETTING_NUMBER_OF_REPLICAS, 1)
+                    .put(EngineConfig.USE_COMPOUND_FILE, randomBoolean())
+            )
+        );
+        indexDocs(indexName, randomIntBetween(100, 1_000));
+        flushAndRefresh(indexName);
+        ensureGreen(indexName);
+
+        final var targetSearchNode = startSearchNode(nodeSettings);
+        ensureStableCluster(3);
+        final var targetNodeId = getNodeId(targetSearchNode);
+        final var warmingServiceOnTargetNode = getSharedBlobCacheWarmingService(targetSearchNode);
+        final var windows = warmingServiceOnTargetNode.searchRecoveryWarmingWindows();
+        final var targetThreadPool = internalCluster().getInstance(ThreadPool.class, targetSearchNode);
+
+        warmingServiceOnTargetNode.holdSearchWarmingCompletion();
+        try {
+            final long relocationStartedMillis = targetThreadPool.relativeTimeInMillis();
+            updateIndexSettings(Settings.builder().put("index.routing.allocation.exclude._name", sourceSearchNode), indexName);
+
+            final var recovering = new AtomicReference<ShardRouting>();
+            assertBusy(() -> {
+                final var routingNode = internalCluster().clusterService().state().getRoutingNodes().node(targetNodeId);
+                final var initializing = routingNode.shardsWithState(indexName, ShardRoutingState.INITIALIZING).toList();
+                assertThat(initializing, hasSize(1));
+                recovering.set(initializing.getFirst());
+                assertTrue(windows.relativeDeadlineMillis(recovering.get().shardId(), recovering.get().allocationId().getId()).isPresent());
+            });
+
+            final var shardId = recovering.get().shardId();
+            final var allocationId = recovering.get().allocationId().getId();
+            final long deadlineMillis = windows.relativeDeadlineMillis(shardId, allocationId).getAsLong();
+            assertThat("the wait has not ended", deadlineMillis, greaterThan(targetThreadPool.relativeTimeInMillis()));
+            assertThat(
+                "the deadline is the start of the wait plus the relocation timeout",
+                deadlineMillis,
+                lessThanOrEqualTo(targetThreadPool.relativeTimeInMillis() + relocationTimeout.millis())
+            );
+            assertThat(deadlineMillis, greaterThanOrEqualTo(relocationStartedMillis + relocationTimeout.millis()));
+
+            warmingServiceOnTargetNode.releaseSearchWarmingCompletion();
+            ensureGreen(indexName);
+
+            assertThat(findSearchShard(resolveIndex(indexName), 0).routingEntry().currentNodeId(), equalTo(targetNodeId));
+            assertThat(
+                "the window does not outlive the recovery",
+                windows.relativeDeadlineMillis(shardId, allocationId),
+                equalTo(OptionalLong.empty())
+            );
+        } finally {
+            warmingServiceOnTargetNode.releaseSearchWarmingCompletion();
+        }
     }
 
     /// How many times [SearchRecoveryTimeoutCalculationService#searchRecoveryTimeout] has been called for each shard recovering on a node.

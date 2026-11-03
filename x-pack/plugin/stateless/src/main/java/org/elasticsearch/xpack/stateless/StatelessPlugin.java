@@ -876,6 +876,7 @@ public class StatelessPlugin extends Plugin
             searchRecoveryTimeoutCalculationService
         );
         setAndGet(this.sharedBlobCacheWarmingService, cacheWarmingService);
+        components.add(cacheWarmingService.searchRecoveryWarmingWindows());
 
         var clusterStateCleanupService = new StatelessClusterStateCleanupService(threadPool, objectStoreService, clusterService);
         clusterService.addListener(clusterStateCleanupService);
@@ -1660,6 +1661,7 @@ public class StatelessPlugin extends Plugin
 
             indexModule.addIndexEventListener(this.searchShardInformationIndexListener.get());
             indexModule.addIndexEventListener(this.pitRelocationService.get());
+            indexModule.addIndexEventListener(this.sharedBlobCacheWarmingService.get().searchRecoveryWarmingWindows());
 
             final var searchIdxVersion = indexModule.indexSettings().getIndexVersionCreated();
             indexModule.setDirectoryWrapper((in, shardRouting) -> {

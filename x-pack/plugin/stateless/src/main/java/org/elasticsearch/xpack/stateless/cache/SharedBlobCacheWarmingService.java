@@ -459,6 +459,7 @@ public class SharedBlobCacheWarmingService {
     private volatile long maxUploadPrewarmSize;
     private volatile int warmByteRangePerFileConcurrency;
     private final SearchRecoveryTimeoutCalculationService searchRecoveryTimeoutCalculationService;
+    private final SearchRecoveryWarmingWindows searchRecoveryWarmingWindows = new SearchRecoveryWarmingWindows();
 
     public SharedBlobCacheWarmingService(
         StatelessSharedBlobCacheService cacheService,
@@ -591,6 +592,10 @@ public class SharedBlobCacheWarmingService {
             WARM_BYTE_RANGE_PER_FILE_CONCURRENCY_SETTING,
             value -> this.warmByteRangePerFileConcurrency = value
         );
+    }
+
+    public SearchRecoveryWarmingWindows searchRecoveryWarmingWindows() {
+        return searchRecoveryWarmingWindows;
     }
 
     public void warmCacheBeforeUpload(VirtualBatchedCompoundCommit vbcc, ActionListener<Void> listener) {
@@ -1072,14 +1077,18 @@ public class SharedBlobCacheWarmingService {
         // - warming completing (the listener returned to warmCache): completes it with WARMING_COMPLETE
         final SubscribableListener<SearchRecoveryWaitOutcome> recoveryWait = new SubscribableListener<>();
 
+        final String allocationId = indexShard.routingEntry().allocationId().getId();
         final var timeoutTask = new ReevaluatingTimeoutTask(
             clusterStateSupplier,
             indexShard,
+            allocationId,
             bytesToWarm,
             () -> directory.totalBytesWarmedFromObjectStore() - bytesWarmedAtStart,
             startedMillis,
             recoveryWait
         );
+        final long initialDeadlineMillis = startedMillis + initialPlan.timeout().millis();
+        searchRecoveryWarmingWindows.startWindow(indexShard.shardId(), allocationId, initialDeadlineMillis);
         timeoutTask.scheduleNextTimeoutReevaluation(initialPlan);
 
         final ActionListener<Void> resumeRecoveryByForkingToGeneric = new ThreadedActionListener<>(
@@ -1138,6 +1147,7 @@ public class SharedBlobCacheWarmingService {
 
         private final Supplier<ClusterState> clusterStateSupplier;
         private final IndexShard indexShard;
+        private final String allocationId;
         private final long bytesToWarm;
         private final LongSupplier bytesWarmedSoFar;
         private final long startedMillis;
@@ -1149,6 +1159,7 @@ public class SharedBlobCacheWarmingService {
         ReevaluatingTimeoutTask(
             Supplier<ClusterState> clusterStateSupplier,
             IndexShard indexShard,
+            String allocationId,
             long bytesToWarm,
             LongSupplier bytesWarmedSoFar,
             long startedMillis,
@@ -1156,6 +1167,7 @@ public class SharedBlobCacheWarmingService {
         ) {
             this.clusterStateSupplier = clusterStateSupplier;
             this.indexShard = indexShard;
+            this.allocationId = allocationId;
             this.bytesToWarm = bytesToWarm;
             this.bytesWarmedSoFar = bytesWarmedSoFar;
             this.startedMillis = startedMillis;
@@ -1191,6 +1203,12 @@ public class SharedBlobCacheWarmingService {
                 );
                 if (extendedPlan.awaitWarming()) {
                     logTimeoutExtension(latestPlan, extendedPlan, elapsed);
+                    final long totalTimeoutMillis = elapsed.millis() + extendedPlan.timeout().millis();
+                    searchRecoveryWarmingWindows.updateDeadlineIfPresent(
+                        indexShard.shardId(),
+                        allocationId,
+                        startedMillis + totalTimeoutMillis
+                    );
                     scheduleNextTimeoutReevaluation(extendedPlan);
                     return;
                 }
@@ -1198,7 +1216,12 @@ public class SharedBlobCacheWarmingService {
                 // offline warming should not fail the recovery, so ignore the exception
                 logger.warn("Search shard recovery offline warming failed.", e);
             }
+            endWarmingWindowNow();
             recoveryWait.onResponse(SearchRecoveryWaitOutcome.TIMEOUT);
+        }
+
+        private void endWarmingWindowNow() {
+            searchRecoveryWarmingWindows.updateDeadlineIfPresent(indexShard.shardId(), allocationId, threadPool.relativeTimeInMillis());
         }
 
         private void logTimeoutExtension(SearchRecoveryTimeout previousPlan, final SearchRecoveryTimeout plan, final TimeValue elapsed) {

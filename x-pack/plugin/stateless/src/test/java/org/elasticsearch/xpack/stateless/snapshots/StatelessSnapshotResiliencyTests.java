@@ -608,7 +608,8 @@ public class StatelessSnapshotResiliencyTests extends SnapshotResiliencyTests {
                         searchService,
                         new PITRelocationService(),
                         new StatelessComponents(mock(TranslogReplicator.class), testStatelessPlugin.objectStoreService),
-                        new PitRelocationMetrics(MeterRegistry.NOOP)
+                        new PitRelocationMetrics(MeterRegistry.NOOP),
+                        testStatelessPlugin.cacheWarmingService.searchRecoveryWarmingWindows()
                     ),
                     TransportShardRefreshAction.TYPE,
                     new TransportShardRefreshAction(

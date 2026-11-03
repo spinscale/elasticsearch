@@ -51,6 +51,7 @@ import org.mockito.Mockito;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Delayed;
@@ -84,6 +85,7 @@ import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.lessThan;
+import static org.hamcrest.Matchers.lessThanOrEqualTo;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.Mockito.mock;
@@ -1335,6 +1337,321 @@ public class SearchShardRecoveryWarmingTests extends ESTestCase {
                     WARN,
                     "Search shard recovery cache warming timed out"
                 )
+            );
+        }
+    }
+
+    private static final Supplier<ClusterState> UNUSED_CLUSTER_STATE_SUPPLIER = () -> null;
+
+    private static void advanceClock(ReevaluationThreadPool threadPool, long millis) {
+        threadPool.schedule(() -> {}, TimeValue.timeValueMillis(millis), threadPool.generic());
+        threadPool.drainTask().run();
+    }
+
+    public void testWarmingWindowIsRecordedAndSurvivesWarmingCompletingEarly() {
+        final var timeout = TimeValue.timeValueMillis(randomLongBetween(1, 100_000));
+        final var indexShard = randomMockIndexShard();
+        final var shardId = indexShard.shardId();
+        final var allocationId = indexShard.routingEntry().allocationId().getId();
+        try (var threadPool = new CapturingScheduleThreadPool(getTestName())) {
+            final var service = newWarmingService(threadPool);
+            final var windows = service.searchRecoveryWarmingWindows();
+            assertThat("no window before the wait", windows.relativeDeadlineMillis(shardId, allocationId), equalTo(OptionalLong.empty()));
+
+            final var resume = new PlainActionFuture<Void>();
+            final var warmingListener = service.searchRecoveryWarmingListener(
+                new SearchRecoveryTimeout(timeout, TimeoutContext.RESHARD_SPLIT_TARGET),
+                UNUSED_CLUSTER_STATE_SUPPLIER,
+                indexShard,
+                mockDirectory(),
+                0L,
+                resume
+            );
+            assertThat(windows.relativeDeadlineMillis(shardId, allocationId), equalTo(OptionalLong.of(timeout.millis())));
+
+            warmingListener.onResponse(null);
+            safeGet(resume);
+            assertThat(
+                "the window outlives the wait",
+                windows.relativeDeadlineMillis(shardId, allocationId),
+                equalTo(OptionalLong.of(timeout.millis()))
+            );
+
+            windows.removeWindow(shardId, allocationId);
+            assertThat(windows.relativeDeadlineMillis(shardId, allocationId), equalTo(OptionalLong.empty()));
+        }
+    }
+
+    public void testWarmingWindowDeadlineIsRelativeToTheStartOfTheWait() {
+        final var timeout = TimeValue.timeValueMillis(randomLongBetween(1, 100_000));
+        final long waitStartMillis = 1_000L;
+        final var indexShard = randomMockIndexShard();
+        final var shardId = indexShard.shardId();
+        final var allocationId = indexShard.routingEntry().allocationId().getId();
+        try (var threadPool = new ReevaluationThreadPool(getTestName())) {
+            final var service = newReevaluatingService(threadPool, Settings.EMPTY, SearchRecoveryTimeout::skip);
+            final var windows = service.searchRecoveryWarmingWindows();
+            advanceClock(threadPool, waitStartMillis);
+
+            service.searchRecoveryWarmingListener(
+                new SearchRecoveryTimeout(timeout, TimeoutContext.RESHARD_SPLIT_TARGET),
+                UNUSED_CLUSTER_STATE_SUPPLIER,
+                indexShard,
+                mockDirectory(),
+                0L,
+                new PlainActionFuture<>()
+            );
+
+            assertThat(windows.relativeDeadlineMillis(shardId, allocationId), equalTo(OptionalLong.of(waitStartMillis + timeout.millis())));
+        }
+    }
+
+    public void testWarmingWindowEndsWhenTheWaitTimesOut() {
+        final var timeout = TimeValue.timeValueMillis(randomLongBetween(1, 100_000));
+        final var indexShard = randomMockIndexShard();
+        final var shardId = indexShard.shardId();
+        final var allocationId = indexShard.routingEntry().allocationId().getId();
+        try (var threadPool = new CapturingScheduleThreadPool(getTestName())) {
+            final var service = newWarmingService(threadPool);
+            final var windows = service.searchRecoveryWarmingWindows();
+            final var resume = new PlainActionFuture<Void>();
+            service.searchRecoveryWarmingListener(
+                new SearchRecoveryTimeout(timeout, TimeoutContext.RESHARD_SPLIT_TARGET),
+                UNUSED_CLUSTER_STATE_SUPPLIER,
+                indexShard,
+                mockDirectory(),
+                0L,
+                resume
+            );
+            assertThat(resume.isDone(), is(false));
+
+            threadPool.scheduledCommand.get().run();
+            safeGet(resume);
+
+            final var deadline = windows.relativeDeadlineMillis(shardId, allocationId);
+            assertThat("a timed out wait keeps its window", deadline.isPresent(), is(true));
+            assertThat(deadline.getAsLong(), lessThanOrEqualTo(threadPool.relativeTimeInMillis()));
+        }
+    }
+
+    public void testNoWarmingWindowForSkipPlans() {
+        try (var threadPool = new CapturingScheduleThreadPool(getTestName())) {
+            final var service = newWarmingService(threadPool);
+            final var windows = service.searchRecoveryWarmingWindows();
+            final var state = clusterStateOneSearchReplica("idx", INITIALIZING);
+            final var shardId = new ShardId("idx", IndexMetadata.INDEX_UUID_NA_VALUE, 0);
+            final var indexShard = mockIndexShard(
+                state.routingTable(DEFAULT_PROJECT_ID).shardRoutingTable(shardId).replicaShards().getFirst()
+            );
+            final var allocationId = indexShard.routingEntry().allocationId().getId();
+
+            final var withoutOfflineWarmingInputs = new PlainActionFuture<Void>();
+            service.warmCacheForSearchShardRecovery(
+                () -> state,
+                indexShard,
+                null,
+                null,
+                mock(WarmingRatioProvider.class),
+                null,
+                withoutOfflineWarmingInputs
+            );
+            safeGet(withoutOfflineWarmingInputs);
+            assertThat(windows.relativeDeadlineMillis(shardId, allocationId), equalTo(OptionalLong.empty()));
+
+            final var withSkipPlan = new PlainActionFuture<Void>();
+            service.warmCacheForSearchShardRecovery(
+                () -> state,
+                indexShard,
+                null,
+                null,
+                mock(WarmingRatioProvider.class),
+                Map.of(new BlobFile("test-blob", new PrimaryTermAndGeneration(0, -1)), WarmTarget.withUnknownTimestamp(1L, 1L)),
+                withSkipPlan
+            );
+            safeGet(withSkipPlan);
+            assertThat(windows.relativeDeadlineMillis(shardId, allocationId), equalTo(OptionalLong.empty()));
+        }
+    }
+
+    public void testWarmingWindowForNonRelocationWithAnotherActiveCopy() throws Exception {
+        final var timeout = TimeValue.timeValueMillis(randomLongBetween(1_000, 100_000));
+        final var settings = Settings.builder()
+            .put(SharedBlobCacheWarmingService.SEARCH_RECOVERY_WARMING_TIMEOUT_NON_RELOCATION_SETTING.getKey(), timeout)
+            .build();
+        try (var threadPool = new CapturingScheduleThreadPool(getTestName())) {
+            final var startWarmLatch = new CountDownLatch(1);
+            final var blockWarmLatch = new CountDownLatch(1);
+            final var service = newWarmingService(threadPool, TelemetryProvider.NOOP, settings, startWarmLatch, blockWarmLatch);
+            final var windows = service.searchRecoveryWarmingWindows();
+            final var state = clusterStateInitializingSearchReplicaWithActivePeer("idx");
+            final var shardId = new ShardId("idx", IndexMetadata.INDEX_UUID_NA_VALUE, 0);
+            final var indexShard = mockIndexShard(initializingSearchReplica(state, shardId));
+            final var allocationId = indexShard.routingEntry().allocationId().getId();
+            assertThat(indexShard.routingEntry().relocatingNodeId(), nullValue());
+
+            final var resume = new PlainActionFuture<Void>();
+            service.warmCacheForSearchShardRecovery(
+                () -> state,
+                indexShard,
+                null,
+                mockDirectory(),
+                mock(WarmingRatioProvider.class),
+                Map.of(new BlobFile("test-blob", new PrimaryTermAndGeneration(0, -1)), WarmTarget.withUnknownTimestamp(1L, 1L)),
+                resume
+            );
+            safeAwait(startWarmLatch);
+            assertThat("the recovery waits for warming", resume.isDone(), is(false));
+            assertThat(windows.relativeDeadlineMillis(shardId, allocationId), equalTo(OptionalLong.of(timeout.millis())));
+
+            blockWarmLatch.countDown();
+            safeGet(resume);
+            assertThat(windows.relativeDeadlineMillis(shardId, allocationId), equalTo(OptionalLong.of(timeout.millis())));
+        }
+    }
+
+    public void testWarmingWindowFollowsReevaluationExtensions() {
+        final var settings = Settings.builder()
+            .put(SearchRecoveryTimeoutCalculationService.OFFLINE_WARMING_TOTAL_TIMEOUT_CAP_SETTING.getKey(), TimeValue.timeValueSeconds(10))
+            .put(SearchRecoveryTimeoutCalculationService.OFFLINE_WARMING_TIMEOUT_REEVALUATION_ENABLED_SETTING.getKey(), true)
+            .put(
+                SearchRecoveryTimeoutCalculationService.OFFLINE_WARMING_TIMEOUT_REEVALUATION_ABORT_THRESHOLD_SETTING.getKey(),
+                TimeValue.timeValueMillis(50)
+            )
+            .build();
+        final var initialTimeout = TimeValue.timeValueMillis(300);
+        final var firstExtensionTimeout = TimeValue.timeValueMillis(200);
+        final var secondExtensionTimeout = TimeValue.timeValueMillis(100);
+        final var initialPlan = new SearchRecoveryTimeout(
+            initialTimeout,
+            TimeoutContext.RELOCATION_SOURCE_NOT_SHUTTING_DOWN_NO_CLUSTER_SHUTDOWN
+        );
+        final var firstExtension = new SearchRecoveryTimeout(
+            firstExtensionTimeout,
+            TimeoutContext.RELOCATION_SOURCE_SHUTTING_DOWN_EQUAL_SHARE,
+            1_000.0
+        );
+        final var secondExtension = new SearchRecoveryTimeout(
+            secondExtensionTimeout,
+            TimeoutContext.RELOCATION_SOURCE_SHUTTING_DOWN_EQUAL_SHARE,
+            500.0
+        );
+        final var planPerReevaluation = List.of(firstExtension, secondExtension, SearchRecoveryTimeout.skip());
+        final var reevaluations = new AtomicInteger();
+        final var indexShard = randomMockIndexShard();
+        final var shardId = indexShard.shardId();
+        final var allocationId = indexShard.routingEntry().allocationId().getId();
+
+        final long firstExpiryMillis = initialTimeout.millis();
+        final long secondExpiryMillis = firstExpiryMillis + firstExtensionTimeout.millis();
+        final long thirdExpiryMillis = secondExpiryMillis + secondExtensionTimeout.millis();
+
+        try (var threadPool = new ReevaluationThreadPool(getTestName())) {
+            final var service = newReevaluatingService(
+                threadPool,
+                settings,
+                (bytesToWarm, previous) -> planPerReevaluation.get(reevaluations.getAndIncrement())
+            );
+            final var windows = service.searchRecoveryWarmingWindows();
+            final var resume = new PlainActionFuture<Void>();
+            service.searchRecoveryWarmingListener(initialPlan, UNUSED_CLUSTER_STATE_SUPPLIER, indexShard, mockDirectory(), 0L, resume);
+            assertThat(windows.relativeDeadlineMillis(shardId, allocationId), equalTo(OptionalLong.of(firstExpiryMillis)));
+
+            threadPool.drainTask().run();
+            assertThat(resume.isDone(), is(false));
+            assertThat(windows.relativeDeadlineMillis(shardId, allocationId), equalTo(OptionalLong.of(secondExpiryMillis)));
+
+            threadPool.drainTask().run();
+            assertThat(resume.isDone(), is(false));
+            assertThat(windows.relativeDeadlineMillis(shardId, allocationId), equalTo(OptionalLong.of(thirdExpiryMillis)));
+
+            threadPool.drainTask().run();
+            safeGet(resume);
+            assertThat(threadPool.relativeTimeInMillis(), equalTo(thirdExpiryMillis));
+            assertThat(windows.relativeDeadlineMillis(shardId, allocationId), equalTo(OptionalLong.of(thirdExpiryMillis)));
+        }
+    }
+
+    public void testWarmingWindowEndsWhenTheSchedulerRefusesAnExtension() {
+        final var sliceSize = TimeValue.timeValueMillis(200);
+        final var settings = Settings.builder()
+            .put(SearchRecoveryTimeoutCalculationService.OFFLINE_WARMING_TIMEOUT_REEVALUATION_ENABLED_SETTING.getKey(), true)
+            .put(
+                SearchRecoveryTimeoutCalculationService.OFFLINE_WARMING_TIMEOUT_REEVALUATION_ABORT_THRESHOLD_SETTING.getKey(),
+                TimeValue.timeValueMillis(50)
+            )
+            .build();
+        final var indexShard = randomMockIndexShard();
+        final var shardId = indexShard.shardId();
+        final var allocationId = indexShard.routingEntry().allocationId().getId();
+
+        try (var threadPool = new ReevaluationThreadPool(getTestName())) {
+            final var service = newReevaluatingService(
+                threadPool,
+                settings,
+                () -> new SearchRecoveryTimeout(sliceSize, TimeoutContext.RELOCATION_SOURCE_SHUTTING_DOWN_EQUAL_SHARE)
+            );
+            final var windows = service.searchRecoveryWarmingWindows();
+            final var resume = new PlainActionFuture<Void>();
+            service.searchRecoveryWarmingListener(
+                new SearchRecoveryTimeout(sliceSize, TimeoutContext.RELOCATION_SOURCE_NOT_SHUTTING_DOWN_NO_CLUSTER_SHUTDOWN),
+                UNUSED_CLUSTER_STATE_SUPPLIER,
+                indexShard,
+                mockDirectory(),
+                0L,
+                resume
+            );
+            assertThat(windows.relativeDeadlineMillis(shardId, allocationId), equalTo(OptionalLong.of(sliceSize.millis())));
+
+            threadPool.rejectSchedules();
+            threadPool.drainTask().run();
+            safeGet(resume);
+
+            assertThat(threadPool.relativeTimeInMillis(), equalTo(sliceSize.millis()));
+            assertThat(
+                "the deadline is the time of the timeout, not the end of the extension that was refused",
+                windows.relativeDeadlineMillis(shardId, allocationId),
+                equalTo(OptionalLong.of(sliceSize.millis()))
+            );
+        }
+    }
+
+    public void testLateReevaluationDoesNotRestoreARemovedWindow() {
+        final var sliceSize = TimeValue.timeValueMillis(200);
+        final var settings = Settings.builder()
+            .put(SearchRecoveryTimeoutCalculationService.OFFLINE_WARMING_TIMEOUT_REEVALUATION_ENABLED_SETTING.getKey(), true)
+            .put(
+                SearchRecoveryTimeoutCalculationService.OFFLINE_WARMING_TIMEOUT_REEVALUATION_ABORT_THRESHOLD_SETTING.getKey(),
+                TimeValue.timeValueMillis(50)
+            )
+            .build();
+        final var indexShard = randomMockIndexShard();
+        final var shardId = indexShard.shardId();
+        final var allocationId = indexShard.routingEntry().allocationId().getId();
+
+        try (var threadPool = new ReevaluationThreadPool(getTestName())) {
+            final var service = newReevaluatingService(
+                threadPool,
+                settings,
+                () -> new SearchRecoveryTimeout(sliceSize, TimeoutContext.RELOCATION_SOURCE_SHUTTING_DOWN_EQUAL_SHARE)
+            );
+            final var windows = service.searchRecoveryWarmingWindows();
+            service.searchRecoveryWarmingListener(
+                new SearchRecoveryTimeout(sliceSize, TimeoutContext.RELOCATION_SOURCE_NOT_SHUTTING_DOWN_NO_CLUSTER_SHUTDOWN),
+                UNUSED_CLUSTER_STATE_SUPPLIER,
+                indexShard,
+                mockDirectory(),
+                0L,
+                new PlainActionFuture<>()
+            );
+            final var expiryExtendingTheWait = threadPool.drainTask();
+
+            windows.removeWindow(shardId, allocationId);
+            expiryExtendingTheWait.run();
+
+            assertThat(
+                "a removed window stays removed",
+                windows.relativeDeadlineMillis(shardId, allocationId),
+                equalTo(OptionalLong.empty())
             );
         }
     }

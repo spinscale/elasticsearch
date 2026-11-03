@@ -62,6 +62,7 @@ import org.elasticsearch.tasks.Task;
 import org.elasticsearch.transport.TransportRequestOptions;
 import org.elasticsearch.transport.TransportService;
 import org.elasticsearch.xpack.stateless.StatelessComponents;
+import org.elasticsearch.xpack.stateless.cache.SearchRecoveryWarmingWindows;
 import org.elasticsearch.xpack.stateless.commits.BatchedCompoundCommit;
 import org.elasticsearch.xpack.stateless.commits.BlobFileRanges;
 import org.elasticsearch.xpack.stateless.commits.BlobLocation;
@@ -118,6 +119,7 @@ public class TransportStatelessUnpromotableRelocationAction extends TransportAct
     private final PITRelocationService pitRelocationService;
     private final ObjectStoreService objectStoreService;
     private final PitRelocationMetrics pitRelocationMetrics;
+    private final SearchRecoveryWarmingWindows searchRecoveryWarmingWindows;
 
     private static final Logger logger = LogManager.getLogger(TransportStatelessUnpromotableRelocationAction.class);
 
@@ -132,7 +134,8 @@ public class TransportStatelessUnpromotableRelocationAction extends TransportAct
         SearchService searchService,
         PITRelocationService pitRelocationService,
         StatelessComponents statelessComponents,
-        PitRelocationMetrics pitRelocationMetrics
+        PitRelocationMetrics pitRelocationMetrics,
+        SearchRecoveryWarmingWindows searchRecoveryWarmingWindows
     ) {
         super(TYPE.name(), actionFilters, transportService.getTaskManager(), EsExecutors.DIRECT_EXECUTOR_SERVICE);
         this.transportService = transportService;
@@ -143,6 +146,7 @@ public class TransportStatelessUnpromotableRelocationAction extends TransportAct
         this.peerRecoveryTargetService = peerRecoveryTargetService;
         this.objectStoreService = statelessComponents.getObjectStoreService();
         this.pitRelocationMetrics = pitRelocationMetrics;
+        this.searchRecoveryWarmingWindows = searchRecoveryWarmingWindows;
         var threadPool = transportService.getThreadPool();
         this.recoveryExecutor = threadPool.generic();
         this.threadContext = threadPool.getThreadContext();
@@ -181,6 +185,11 @@ public class TransportStatelessUnpromotableRelocationAction extends TransportAct
 
             assert indexShard.indexSettings().getIndexMetadata().isSearchableSnapshot() == false;
 
+            final var listenerRemovingWarmingWindow = ActionListener.runBefore(
+                listener,
+                () -> searchRecoveryWarmingWindows.removeWindow(request.getShardId(), request.getTargetAllocationId())
+            );
+
             SubscribableListener.<Void>newForked(l -> {
                 indexShard.ensureRecoveryNotCancelled();
                 indexShard.preRecovery(l);
@@ -199,7 +208,7 @@ public class TransportStatelessUnpromotableRelocationAction extends TransportAct
                 .<RelocationHandoffResponse>andThen(l -> maybeSendStartHandoffRequest(indexShard, task, request, l))
                 .<Void>andThen((l, response) -> handlePitHandoffResponse(indexShard, response.pitHandoffResponse, l))
                 .andThenApply(unused -> Empty.INSTANCE)
-                .addListener(listener);
+                .addListener(listenerRemovingWarmingWindow);
         }
     }
 
