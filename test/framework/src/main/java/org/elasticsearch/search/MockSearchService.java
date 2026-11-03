@@ -150,6 +150,7 @@ public class MockSearchService extends SearchService {
         ExecutorSelector executorSelector,
         Tracer tracer,
         OnlinePrewarmingService onlinePrewarmingService,
+        ShardQueryRequestObserver shardQueryRequestObserver,
         TaskManager taskManager
     ) {
         super(
@@ -163,6 +164,7 @@ public class MockSearchService extends SearchService {
             executorSelector,
             tracer,
             onlinePrewarmingService,
+            shardQueryRequestObserver,
             taskManager
         );
     }

@@ -240,6 +240,8 @@ import org.elasticsearch.script.ScriptService;
 import org.elasticsearch.search.SearchModule;
 import org.elasticsearch.search.SearchService;
 import org.elasticsearch.search.SearchUtils;
+import org.elasticsearch.search.ShardQueryRequestObserver;
+import org.elasticsearch.search.ShardQueryRequestObserverProvider;
 import org.elasticsearch.search.aggregations.AggregatorFactories;
 import org.elasticsearch.search.aggregations.support.AggregationUsageService;
 import org.elasticsearch.search.crossproject.CrossProjectModeDecider;
@@ -1372,6 +1374,10 @@ class NodeConstruction {
             OnlinePrewarmingServiceProvider.class,
             () -> OnlinePrewarmingServiceProvider.DEFAULT
         ).create(clusterService.getSettings(), threadPool, clusterService, telemetryProvider);
+        ShardQueryRequestObserver shardQueryRequestObserver = pluginsService.loadSingletonServiceProvider(
+            ShardQueryRequestObserverProvider.class,
+            () -> ShardQueryRequestObserverProvider.DEFAULT
+        ).create(clusterService.getSettings(), threadPool, clusterService, telemetryProvider);
         final SearchService searchService = serviceProvider.newSearchService(
             pluginsService,
             clusterService,
@@ -1384,6 +1390,7 @@ class NodeConstruction {
             systemIndices.getExecutorSelector(),
             telemetryProvider.getTracer(),
             onlinePrewarmingService,
+            shardQueryRequestObserver,
             transportService.getTaskManager()
         );
         searchTransportService.setSearchService(searchService);

@@ -45,6 +45,7 @@ import org.elasticsearch.script.ScriptEngine;
 import org.elasticsearch.script.ScriptService;
 import org.elasticsearch.search.MockSearchService;
 import org.elasticsearch.search.SearchService;
+import org.elasticsearch.search.ShardQueryRequestObserver;
 import org.elasticsearch.search.crossproject.CrossProjectModeDecider;
 import org.elasticsearch.search.fetch.FetchPhase;
 import org.elasticsearch.tasks.TaskManager;
@@ -133,6 +134,7 @@ public class MockNode extends Node {
             ExecutorSelector executorSelector,
             Tracer tracer,
             OnlinePrewarmingService onlinePrewarmingService,
+            ShardQueryRequestObserver shardQueryRequestObserver,
             TaskManager taskManager
         ) {
             if (pluginsService.filterPlugins(MockSearchService.TestPlugin.class).findAny().isEmpty()) {
@@ -148,6 +150,7 @@ public class MockNode extends Node {
                     executorSelector,
                     tracer,
                     onlinePrewarmingService,
+                    shardQueryRequestObserver,
                     taskManager
                 );
             }
@@ -163,6 +166,7 @@ public class MockNode extends Node {
                 executorSelector,
                 tracer,
                 onlinePrewarmingService,
+                shardQueryRequestObserver,
                 taskManager
             );
         }

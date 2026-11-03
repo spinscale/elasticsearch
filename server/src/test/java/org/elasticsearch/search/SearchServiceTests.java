@@ -23,9 +23,14 @@ import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.TransportVersion;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.OriginalIndices;
+import org.elasticsearch.action.search.OnlinePrewarmingService;
 import org.elasticsearch.action.search.SearchRequest;
+import org.elasticsearch.action.search.SearchScrollRequest;
+import org.elasticsearch.action.search.SearchShardTask;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.routing.SplitShardCountSummary;
+import org.elasticsearch.cluster.service.ClusterService;
+import org.elasticsearch.common.UUIDs;
 import org.elasticsearch.common.breaker.CircuitBreaker;
 import org.elasticsearch.common.breaker.CircuitBreakingException;
 import org.elasticsearch.common.component.Lifecycle;
@@ -34,6 +39,7 @@ import org.elasticsearch.common.settings.ClusterSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.concurrent.EsRejectedExecutionException;
+import org.elasticsearch.index.Index;
 import org.elasticsearch.index.IndexMode;
 import org.elasticsearch.index.IndexService;
 import org.elasticsearch.index.IndexSettings;
@@ -64,18 +70,29 @@ import org.elasticsearch.index.query.WildcardQueryBuilder;
 import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.index.shard.IndexShardTestCase;
 import org.elasticsearch.index.shard.ShardId;
+import org.elasticsearch.indices.EmptySystemIndices;
+import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.indices.breaker.CircuitBreakerMetrics;
 import org.elasticsearch.indices.breaker.HierarchyCircuitBreakerService;
+import org.elasticsearch.indices.breaker.NoneCircuitBreakerService;
 import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.script.ScriptCompiler;
 import org.elasticsearch.search.aggregations.support.ValuesSourceType;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
+import org.elasticsearch.search.fetch.FetchPhase;
+import org.elasticsearch.search.fetch.ShardFetchRequest;
+import org.elasticsearch.search.fetch.chunk.FetchPhaseResponseChunk;
 import org.elasticsearch.search.internal.AliasFilter;
+import org.elasticsearch.search.internal.InternalScrollSearchRequest;
+import org.elasticsearch.search.internal.ShardSearchContextId;
 import org.elasticsearch.search.internal.ShardSearchRequest;
 import org.elasticsearch.search.sort.BucketedSort;
 import org.elasticsearch.search.sort.MinAndMax;
 import org.elasticsearch.search.sort.SortOrder;
+import org.elasticsearch.tasks.TaskManager;
 import org.elasticsearch.telemetry.metric.MeterRegistry;
+import org.elasticsearch.telemetry.tracing.Tracer;
+import org.elasticsearch.test.ClusterServiceUtils;
 import org.elasticsearch.test.MockLog;
 import org.elasticsearch.threadpool.DefaultBuiltInExecutorBuilders;
 import org.elasticsearch.threadpool.ThreadPool;
@@ -84,6 +101,7 @@ import org.elasticsearch.xcontent.XContentParserConfiguration;
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -104,9 +122,12 @@ import static org.elasticsearch.search.SearchService.wrapListenerForErrorHandlin
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.sameInstance;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -899,5 +920,163 @@ public class SearchServiceTests extends IndexShardTestCase {
             .put(SearchService.ASYNC_SEARCH_DEFAULT_KEEP_ALIVE_SETTING.getKey(), defaultKeepAlive)
             .put(SearchService.ASYNC_SEARCH_MAX_KEEP_ALIVE_SETTING.getKey(), maxKeepAlive)
             .build();
+    }
+
+    private static final String OBSERVED = "observed";
+    private static final String REWRITING = "rewriting";
+
+    private static final class StopAtRewrite extends RuntimeException {
+        StopAtRewrite() {
+            super("stop at rewrite", null, false, false);
+        }
+    }
+
+    private record ObservedRequest(IndexShard shard, ShardSearchRequest request) {}
+
+    public void testQueryRequestObserverSeesRequestBeforeItIsRewritten() throws IOException {
+        IndexShard indexShard = newShard(true);
+        try (ClusterService clusterService = ClusterServiceUtils.createClusterService(threadPool)) {
+            recoverShardFromStore(indexShard);
+            List<String> events = new ArrayList<>();
+            List<ObservedRequest> observed = new ArrayList<>();
+            SearchService searchService = newSearchServiceStoppingAtRewrite(clusterService, indexShard, events, (shard, request) -> {
+                events.add(OBSERVED);
+                observed.add(new ObservedRequest(shard, request));
+            });
+            try {
+                ShardSearchRequest request = newQueryPhaseRequest(indexShard.shardId());
+
+                expectThrows(
+                    StopAtRewrite.class,
+                    () -> searchService.executeQueryPhase(request, newSearchShardTask(), ActionListener.noop())
+                );
+
+                assertThat(events, equalTo(List.of(OBSERVED, REWRITING)));
+                assertThat(observed, hasSize(1));
+                assertThat(observed.get(0).shard(), sameInstance(indexShard));
+                assertThat(observed.get(0).request(), sameInstance(request));
+            } finally {
+                searchService.close();
+            }
+        } finally {
+            closeShards(indexShard);
+        }
+    }
+
+    public void testFailingQueryRequestObserverDoesNotFailTheSearch() throws IOException {
+        IndexShard indexShard = newShard(true);
+        try (ClusterService clusterService = ClusterServiceUtils.createClusterService(threadPool)) {
+            recoverShardFromStore(indexShard);
+            List<String> events = new ArrayList<>();
+            SearchService searchService = newSearchServiceStoppingAtRewrite(clusterService, indexShard, events, (shard, request) -> {
+                events.add(OBSERVED);
+                throw new IllegalStateException("observer failure");
+            });
+            try {
+                ShardSearchRequest request = newQueryPhaseRequest(indexShard.shardId());
+
+                expectThrows(
+                    StopAtRewrite.class,
+                    () -> searchService.executeQueryPhase(request, newSearchShardTask(), ActionListener.noop())
+                );
+
+                assertThat(events, equalTo(List.of(OBSERVED, REWRITING)));
+            } finally {
+                searchService.close();
+            }
+        } finally {
+            closeShards(indexShard);
+        }
+    }
+
+    public void testQueryRequestObserverIsNotCalledForDfsScrollOrFetch() throws IOException {
+        IndexShard indexShard = newShard(true);
+        try (ClusterService clusterService = ClusterServiceUtils.createClusterService(threadPool)) {
+            recoverShardFromStore(indexShard);
+            List<String> events = new ArrayList<>();
+            SearchService searchService = newSearchServiceStoppingAtRewrite(
+                clusterService,
+                indexShard,
+                events,
+                (shard, request) -> events.add(OBSERVED)
+            );
+            try {
+                SearchShardTask task = newSearchShardTask();
+
+                expectThrows(
+                    StopAtRewrite.class,
+                    () -> searchService.executeDfsPhase(newQueryPhaseRequest(indexShard.shardId()), task, ActionListener.noop())
+                );
+                assertThat("the DFS request reached the rewrite step", events, equalTo(List.of(REWRITING)));
+
+                ShardSearchContextId unknownContextId = new ShardSearchContextId(UUIDs.randomBase64UUID(), randomNonNegativeLong());
+                expectThrows(
+                    SearchContextMissingException.class,
+                    () -> searchService.executeQueryPhase(
+                        new InternalScrollSearchRequest(new SearchScrollRequest(), unknownContextId),
+                        task,
+                        ActionListener.noop(),
+                        TransportVersion.current()
+                    )
+                );
+                FetchPhaseResponseChunk.Writer writerNeverUsed = null;
+                expectThrows(
+                    SearchContextMissingException.class,
+                    () -> searchService.executeFetchPhase(
+                        new ShardFetchRequest(unknownContextId, List.of(0), null),
+                        task,
+                        writerNeverUsed,
+                        ActionListener.noop()
+                    )
+                );
+
+                assertThat("nothing was observed", events, equalTo(List.of(REWRITING)));
+            } finally {
+                searchService.close();
+            }
+        } finally {
+            closeShards(indexShard);
+        }
+    }
+
+    private SearchService newSearchServiceStoppingAtRewrite(
+        ClusterService clusterService,
+        IndexShard shard,
+        List<String> events,
+        ShardQueryRequestObserver observer
+    ) {
+        // mocked because the real IndicesService and IndexService need a whole node
+        IndexService indexService = mock(IndexService.class);
+        when(indexService.getShard(anyInt())).thenReturn(shard);
+        IndicesService indicesService = mock(IndicesService.class);
+        when(indicesService.indexServiceSafe(any(Index.class))).thenReturn(indexService);
+        when(indicesService.getDataRewriteContext(any())).thenAnswer(invocation -> {
+            events.add(REWRITING);
+            throw new StopAtRewrite();
+        });
+        return new SearchService(
+            clusterService,
+            indicesService,
+            threadPool,
+            null,
+            null,
+            new FetchPhase(Collections.emptyList()),
+            new NoneCircuitBreakerService(),
+            EmptySystemIndices.INSTANCE.getExecutorSelector(),
+            Tracer.NOOP,
+            OnlinePrewarmingService.NOOP,
+            observer,
+            new TaskManager(Settings.EMPTY, threadPool, Collections.emptySet())
+        );
+    }
+
+    private static ShardSearchRequest newQueryPhaseRequest(ShardId shardId) {
+        SearchRequest searchRequest = new SearchRequest().allowPartialSearchResults(false)
+            .source(new SearchSourceBuilder().query(new MatchAllQueryBuilder()));
+        return new ShardSearchRequest(OriginalIndices.NONE, searchRequest, shardId, 0, 5, AliasFilter.EMPTY, 1.0f, 0, null);
+    }
+
+    private static SearchShardTask newSearchShardTask() {
+        return new SearchShardTask(123L, "", "", "", null, Collections.emptyMap());
     }
 }

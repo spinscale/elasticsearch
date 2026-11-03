@@ -43,8 +43,12 @@ import org.elasticsearch.common.util.PageCacheRecycler;
 import org.elasticsearch.common.util.concurrent.EsExecutors;
 import org.elasticsearch.core.IOUtils;
 import org.elasticsearch.core.TimeValue;
+import org.elasticsearch.index.Index;
+import org.elasticsearch.index.IndexService;
+import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.indices.EmptySystemIndices;
+import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.indices.breaker.CircuitBreakerService;
 import org.elasticsearch.lucene.grouping.TopFieldGroups;
 import org.elasticsearch.rest.action.search.SearchResponseMetrics;
@@ -52,6 +56,7 @@ import org.elasticsearch.search.DocValueFormat;
 import org.elasticsearch.search.SearchPhaseResult;
 import org.elasticsearch.search.SearchService;
 import org.elasticsearch.search.SearchShardTarget;
+import org.elasticsearch.search.ShardQueryRequestObserver;
 import org.elasticsearch.search.builder.PointInTimeBuilder;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.search.collapse.CollapseBuilder;
@@ -64,6 +69,7 @@ import org.elasticsearch.search.sort.SortBuilders;
 import org.elasticsearch.tasks.CancellableTask;
 import org.elasticsearch.telemetry.TelemetryProvider;
 import org.elasticsearch.telemetry.tracing.Tracer;
+import org.elasticsearch.test.ClusterServiceUtils;
 import org.elasticsearch.test.ESTestCase;
 import org.elasticsearch.test.InternalAggregationTestCase;
 import org.elasticsearch.test.TransportVersionUtils;
@@ -94,6 +100,8 @@ import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.instanceOf;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -561,6 +569,109 @@ public class SearchQueryThenFetchAsyncActionTests extends ESTestCase {
         assertThat(breaker.getUsed(), equalTo(0L));
     }
 
+    public void testBatchedQueryPhaseCallsQueryRequestObserverBeforeRewriting() throws Exception {
+        final int shards = randomIntBetween(2, 5);
+        final List<String> events = new ArrayList<>();
+        final List<ShardSearchRequest> observed = new ArrayList<>();
+
+        // mocked because the real IndicesService and IndexService need a whole node
+        IndexService indexService = mock(IndexService.class);
+        when(indexService.getShard(anyInt())).thenReturn(mock(IndexShard.class));
+        IndicesService indicesService = mock(IndicesService.class);
+        when(indicesService.indexServiceSafe(any(Index.class))).thenReturn(indexService);
+        when(indicesService.getDataRewriteContext(any())).thenAnswer(invocation -> {
+            events.add("rewriting");
+            throw new IllegalStateException("stop at rewrite");
+        });
+
+        TestThreadPool threadPool = new TestThreadPool(getTestName());
+        var innerTransport = MockTransportService.newMockTransport(Settings.EMPTY, TransportVersion.current(), threadPool);
+        String nodeId = UUIDs.randomBase64UUID();
+        MockTransportService transport = new MockTransportService(
+            Settings.EMPTY,
+            innerTransport,
+            threadPool,
+            TransportService.NOOP_TRANSPORT_INTERCEPTOR,
+            boundAddress -> DiscoveryNodeUtils.builder(nodeId)
+                .address(boundAddress.publishAddress())
+                .version(VersionInformation.CURRENT)
+                .build(),
+            null,
+            Collections.emptySet(),
+            nodeId
+        );
+        ClusterService clusterService = ClusterServiceUtils.createClusterService(threadPool);
+        SearchService searchService = new SearchService(
+            clusterService,
+            indicesService,
+            threadPool,
+            null,
+            null,
+            new FetchPhase(Collections.emptyList()),
+            newLimitedBreakerService(ByteSizeValue.ofMb(10)),
+            EmptySystemIndices.INSTANCE.getExecutorSelector(),
+            Tracer.NOOP,
+            OnlinePrewarmingService.NOOP,
+            (shard, request) -> {
+                events.add("observed");
+                observed.add(request);
+            },
+            transport.getTaskManager()
+        );
+        try {
+            transport.start();
+
+            SearchQueryThenFetchAsyncAction.registerNodeSearchAction(
+                new SearchTransportService(transport, null, null),
+                searchService,
+                new SearchPhaseController((t, r) -> InternalAggregationTestCase.emptyReduceContextBuilder()),
+                new NamedWriteableRegistry(List.of())
+            );
+
+            SearchRequest searchRequest = new SearchRequest();
+            searchRequest.source(new SearchSourceBuilder().size(0));
+            searchRequest.allowPartialSearchResults(true);
+            var nodeQueryRequest = new SearchQueryThenFetchAsyncAction.NodeQueryRequest(searchRequest, shards, 0L, null);
+            for (int i = 0; i < shards; i++) {
+                nodeQueryRequest.shards.add(
+                    new SearchQueryThenFetchAsyncAction.ShardToQuery(
+                        1.0f,
+                        new String[] { "idx" },
+                        i,
+                        new ShardId("idx", "uuid", i),
+                        null,
+                        SplitShardCountSummary.UNSET
+                    )
+                );
+            }
+
+            RecordingChannel channel = new RecordingChannel(TransportVersion.current());
+            @SuppressWarnings("unchecked")
+            RequestHandlerRegistry<SearchQueryThenFetchAsyncAction.NodeQueryRequest> handler = (RequestHandlerRegistry<
+                SearchQueryThenFetchAsyncAction.NodeQueryRequest>) transport.getRequestHandler(
+                    SearchQueryThenFetchAsyncAction.NODE_SEARCH_ACTION_NAME
+                );
+            handler.processMessageReceived(nodeQueryRequest, channel);
+
+            assertTrue("channel was not responded to within 10 seconds", channel.responded.await(10, TimeUnit.SECONDS));
+            if (channel.response != null) {
+                assertTrue(((BytesTransportResponse) channel.response).decRef());
+            }
+
+            List<String> expectedEvents = new ArrayList<>();
+            List<Integer> expectedShardIds = new ArrayList<>();
+            for (int i = 0; i < shards; i++) {
+                expectedEvents.add("observed");
+                expectedEvents.add("rewriting");
+                expectedShardIds.add(i);
+            }
+            assertThat(events, equalTo(expectedEvents));
+            assertThat(observed.stream().map(request -> request.shardId().id()).toList(), equalTo(expectedShardIds));
+        } finally {
+            IOUtils.closeWhileHandlingException(searchService, clusterService, transport, threadPool);
+        }
+    }
+
     /**
      * Runs a request for {@code shards} shards through the batched query handler of a node whose shards return empty results, and
      * returns the channel once the handler has responded on it.
@@ -623,6 +734,7 @@ public class SearchQueryThenFetchAsyncActionTests extends ESTestCase {
             EmptySystemIndices.INSTANCE.getExecutorSelector(),
             Tracer.NOOP,
             OnlinePrewarmingService.NOOP,
+            ShardQueryRequestObserver.NOOP,
             transport.getTaskManager()
         ) {
             @Override
@@ -766,6 +878,7 @@ public class SearchQueryThenFetchAsyncActionTests extends ESTestCase {
             EmptySystemIndices.INSTANCE.getExecutorSelector(),
             Tracer.NOOP,
             OnlinePrewarmingService.NOOP,
+            ShardQueryRequestObserver.NOOP,
             transport.getTaskManager()
         ) {
             @Override

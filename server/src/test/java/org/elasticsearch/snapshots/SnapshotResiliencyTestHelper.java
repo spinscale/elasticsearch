@@ -160,6 +160,7 @@ import org.elasticsearch.rest.action.search.SearchResponseMetrics;
 import org.elasticsearch.script.ScriptCompiler;
 import org.elasticsearch.script.ScriptService;
 import org.elasticsearch.search.SearchService;
+import org.elasticsearch.search.ShardQueryRequestObserver;
 import org.elasticsearch.search.crossproject.CrossProjectModeDecider;
 import org.elasticsearch.search.fetch.FetchPhase;
 import org.elasticsearch.search.fetch.chunk.ActiveFetchPhaseTasks;
@@ -760,6 +761,7 @@ public class SnapshotResiliencyTestHelper {
                     EmptySystemIndices.INSTANCE.getExecutorSelector(),
                     Tracer.NOOP,
                     OnlinePrewarmingService.NOOP,
+                    ShardQueryRequestObserver.NOOP,
                     transportService.getTaskManager()
                 );
 

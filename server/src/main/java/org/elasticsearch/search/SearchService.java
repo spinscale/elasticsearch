@@ -445,6 +445,7 @@ public class SearchService extends AbstractLifecycleComponent implements IndexEv
     private final FetchPhase fetchPhase;
     private final CircuitBreaker circuitBreaker;
     private final OnlinePrewarmingService onlinePrewarmingService;
+    private final ShardQueryRequestObserver shardQueryRequestObserver;
     private final int prewarmingMaxPoolFactorThreshold;
     private volatile Executor searchExecutor;
     private volatile boolean enableQueryPhaseParallelCollection;
@@ -500,6 +501,7 @@ public class SearchService extends AbstractLifecycleComponent implements IndexEv
         ExecutorSelector executorSelector,
         Tracer tracer,
         OnlinePrewarmingService onlinePrewarmingService,
+        ShardQueryRequestObserver shardQueryRequestObserver,
         TaskManager taskManager
     ) {
         Settings settings = clusterService.getSettings();
@@ -517,6 +519,7 @@ public class SearchService extends AbstractLifecycleComponent implements IndexEv
         this.tracer = tracer;
         this.taskManager = taskManager;
         this.onlinePrewarmingService = onlinePrewarmingService;
+        this.shardQueryRequestObserver = shardQueryRequestObserver;
         TimeValue keepAliveInterval = KEEPALIVE_INTERVAL_SETTING.get(settings);
         setKeepAlives(DEFAULT_KEEPALIVE_SETTING.get(settings), MAX_KEEPALIVE_SETTING.get(settings));
 
@@ -919,6 +922,7 @@ public class SearchService extends AbstractLifecycleComponent implements IndexEv
         assert request.canReturnNullResponseIfMatchNoDocs() == false || request.numberOfShards() > 1
             : "empty responses require more than one shard";
         final IndexShard shard = getShard(request);
+        notifyQueryRequestObserverIgnoringFailures(shard, request);
 
         ActionListener<SearchPhaseResult> wrappedListener = releaseCircuitBreakerOnResponse(
             listener,
@@ -954,6 +958,14 @@ public class SearchService extends AbstractLifecycleComponent implements IndexEv
                 executeQueryPhaseAsync(shard, orig, task, l);
             })
         );
+    }
+
+    private void notifyQueryRequestObserverIgnoringFailures(IndexShard shard, ShardSearchRequest request) {
+        try {
+            shardQueryRequestObserver.onQueryPhaseRequest(shard, request);
+        } catch (Exception e) {
+            logger.debug(() -> format("%s: query request observer failed", request.shardId()), e);
+        }
     }
 
     private void executeQueryPhaseAsync(

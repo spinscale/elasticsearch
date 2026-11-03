@@ -43,6 +43,7 @@ import org.elasticsearch.script.ScriptContext;
 import org.elasticsearch.script.ScriptEngine;
 import org.elasticsearch.script.ScriptService;
 import org.elasticsearch.search.SearchService;
+import org.elasticsearch.search.ShardQueryRequestObserver;
 import org.elasticsearch.search.crossproject.CrossProjectModeDecider;
 import org.elasticsearch.search.fetch.FetchPhase;
 import org.elasticsearch.tasks.TaskManager;
@@ -198,6 +199,7 @@ class NodeServiceProvider {
         ExecutorSelector executorSelector,
         Tracer tracer,
         OnlinePrewarmingService onlinePrewarmingService,
+        ShardQueryRequestObserver shardQueryRequestObserver,
         TaskManager taskManager
     ) {
         return new SearchService(
@@ -211,6 +213,7 @@ class NodeServiceProvider {
             executorSelector,
             tracer,
             onlinePrewarmingService,
+            shardQueryRequestObserver,
             taskManager
         );
     }

@@ -3253,6 +3253,7 @@ public class SearchServiceSingleNodeTests extends ESSingleNodeTestCase {
             getInstanceFromNode(ExecutorSelector.class),
             Tracer.NOOP,
             OnlinePrewarmingService.NOOP,
+            ShardQueryRequestObserver.NOOP,
             getInstanceFromNode(TransportService.class).getTaskManager()
         );
         service.start();

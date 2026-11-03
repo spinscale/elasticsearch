@@ -42,6 +42,7 @@ import org.elasticsearch.search.SearchHits;
 import org.elasticsearch.search.SearchPhaseResult;
 import org.elasticsearch.search.SearchService;
 import org.elasticsearch.search.SearchShardTarget;
+import org.elasticsearch.search.ShardQueryRequestObserver;
 import org.elasticsearch.search.builder.PointInTimeBuilder;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.search.fetch.FetchPhase;
@@ -956,6 +957,7 @@ public class FetchSearchPhaseChunkedTests extends ESTestCase {
                 EmptySystemIndices.INSTANCE.getExecutorSelector(),
                 Tracer.NOOP,
                 OnlinePrewarmingService.NOOP,
+                ShardQueryRequestObserver.NOOP,
                 new TaskManager(Settings.EMPTY, threadPool, Collections.emptySet())
             );
             this.chunkedEnabled = chunkedEnabled;
