@@ -72,6 +72,8 @@ import org.elasticsearch.xpack.stateless.engine.SearchEngine;
 import org.elasticsearch.xpack.stateless.lucene.SearchDirectory;
 import org.elasticsearch.xpack.stateless.objectstore.ObjectStoreService;
 import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueriesSettings;
+import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryMetrics;
+import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryReplayer;
 import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQuerySample;
 import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQuerySampleRequester;
 import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQuerySamplers;
@@ -127,6 +129,7 @@ public class TransportStatelessUnpromotableRelocationAction extends TransportAct
     private final PitRelocationMetrics pitRelocationMetrics;
     private final SearchRecoveryWarmingWindows searchRecoveryWarmingWindows;
     private final PhantomQuerySampleRequester phantomQuerySampleRequester;
+    private final PhantomQueryReplayer phantomQueryReplayer;
 
     private static final Logger logger = LogManager.getLogger(TransportStatelessUnpromotableRelocationAction.class);
 
@@ -145,6 +148,7 @@ public class TransportStatelessUnpromotableRelocationAction extends TransportAct
         SearchRecoveryWarmingWindows searchRecoveryWarmingWindows,
         PhantomQuerySamplers phantomQuerySamplers,
         PhantomQueriesSettings phantomQueriesSettings,
+        PhantomQueryMetrics phantomQueryMetrics,
         NamedWriteableRegistry namedWriteableRegistry
     ) {
         super(TYPE.name(), actionFilters, transportService.getTaskManager(), EsExecutors.DIRECT_EXECUTOR_SERVICE);
@@ -183,6 +187,16 @@ public class TransportStatelessUnpromotableRelocationAction extends TransportAct
             recoveryExecutor,
             startHandoffRequestTimeout
         );
+        // one per node, because it limits how many phantom queries run at once for all the recovering shards
+        this.phantomQueryReplayer = new PhantomQueryReplayer(
+            threadPool,
+            transportService.getTaskManager(),
+            searchService,
+            phantomQueriesSettings,
+            searchRecoveryWarmingWindows,
+            phantomQueryMetrics,
+            namedWriteableRegistry
+        );
         this.pitRelocationService.setActiveReaderContextProvider(searchService::getActivePITContexts);
         clusterService.getClusterSettings()
             .addSettingsUpdateConsumer(
@@ -210,8 +224,10 @@ public class TransportStatelessUnpromotableRelocationAction extends TransportAct
                 () -> searchRecoveryWarmingWindows.removeWindow(request.getShardId(), request.getTargetAllocationId())
             );
 
+            // the copy as it was when its recovery started, which is what tells a relocation target from a new copy
+            final var recoveringCopy = indexShard.routingEntry();
             // started before the warming wait, so that the peer samples while the recovery waits
-            final var sampling = phantomQuerySampleRequester.startSampling(task, indexShard.routingEntry());
+            final var sampling = phantomQuerySampleRequester.startSampling(task, recoveringCopy);
 
             SubscribableListener.<Void>newForked(l -> {
                 indexShard.ensureRecoveryNotCancelled();
@@ -230,8 +246,10 @@ public class TransportStatelessUnpromotableRelocationAction extends TransportAct
             })
                 .<RelocationHandoffResponse>andThen(l -> maybeSendStartHandoffRequest(indexShard, task, request, l))
                 .<Void>andThen((l, response) -> handlePitHandoffResponse(indexShard, response.pitHandoffResponse, l))
-                // the sample is not used yet
                 .<PhantomQuerySample>andThen(l -> sampling.collectSample(task, l))
+                // The engine is open and the copy is still RECOVERING, so the sampled queries warm it before it is reported as started,
+                // within the time that is left of the warming window. The recovery never fails because of them.
+                .<Void>andThen((l, sample) -> phantomQueryReplayer.replay(task, indexShard, recoveringCopy, sample, l))
                 .andThenApply(unused -> Empty.INSTANCE)
                 .addListener(listenerRemovingWarmingWindow);
         }

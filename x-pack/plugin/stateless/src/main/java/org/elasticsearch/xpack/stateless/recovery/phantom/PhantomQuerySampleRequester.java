@@ -69,7 +69,9 @@ public class PhantomQuerySampleRequester {
             warmingWindows,
             responseExecutor,
             requestTimeout,
-            transportService.getThreadPool()::relativeTimeInMillis,
+            // The raw clock, as the replay uses, because the cached one only moves every 200ms by default: a window that is over could
+            // look like it still had time, and a sample would be collected that the replay then has no time for.
+            transportService.getThreadPool()::rawRelativeTimeInMillis,
             Randomness::get
         );
     }

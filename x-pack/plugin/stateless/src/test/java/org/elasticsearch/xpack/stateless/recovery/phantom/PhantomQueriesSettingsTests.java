@@ -28,6 +28,7 @@ public class PhantomQueriesSettingsTests extends ESTestCase {
         assertThat(PhantomQueriesSettings.MAX_QUERIES_PER_SAMPLE_SETTING.get(Settings.EMPTY), equalTo(100));
         assertThat(PhantomQueriesSettings.MAX_BYTES_PER_SAMPLE_SETTING.get(Settings.EMPTY), equalTo(ByteSizeValue.ofMb(1)));
         assertThat(PhantomQueriesSettings.MAX_BYTES_PER_NODE_SETTING.get(Settings.EMPTY), equalTo(ByteSizeValue.ofMb(16)));
+        assertThat(PhantomQueriesSettings.MAX_CONCURRENT_PER_NODE_SETTING.get(Settings.EMPTY), equalTo(2));
     }
 
     public void testSettingKeys() {
@@ -44,10 +45,14 @@ public class PhantomQueriesSettingsTests extends ESTestCase {
             PhantomQueriesSettings.MAX_BYTES_PER_NODE_SETTING.getKey(),
             equalTo("stateless.search.phantom_queries.max_bytes_per_node")
         );
+        assertThat(
+            PhantomQueriesSettings.MAX_CONCURRENT_PER_NODE_SETTING.getKey(),
+            equalTo("stateless.search.phantom_queries.max_concurrent_per_node")
+        );
     }
 
     public void testAllSettingsAreDynamicAndNodeScoped() {
-        assertThat(PhantomQueriesSettings.settings(), hasSize(4));
+        assertThat(PhantomQueriesSettings.settings(), hasSize(5));
         for (Setting<?> setting : PhantomQueriesSettings.settings()) {
             assertTrue(setting.getKey() + " must be dynamic", setting.isDynamic());
             assertTrue(setting.getKey() + " must be node scoped", setting.hasNodeScope());
@@ -63,6 +68,22 @@ public class PhantomQueriesSettingsTests extends ESTestCase {
         final var e = expectThrows(IllegalArgumentException.class, () -> setting.get(Settings.builder().put(setting.getKey(), -1).build()));
         assertThat(e.getMessage(), containsString(setting.getKey()));
         assertThat(e.getMessage(), containsString(">= 0"));
+    }
+
+    public void testMaxConcurrentPerNodeBounds() {
+        final var setting = PhantomQueriesSettings.MAX_CONCURRENT_PER_NODE_SETTING;
+        assertThat(setting.get(Settings.builder().put(setting.getKey(), 1).build()), equalTo(1));
+        final int value = randomIntBetween(1, Integer.MAX_VALUE);
+        assertThat(setting.get(Settings.builder().put(setting.getKey(), value).build()), equalTo(value));
+
+        for (int tooSmall : new int[] { 0, -1, randomIntBetween(Integer.MIN_VALUE, -1) }) {
+            final var e = expectThrows(
+                IllegalArgumentException.class,
+                () -> setting.get(Settings.builder().put(setting.getKey(), tooSmall).build())
+            );
+            assertThat(e.getMessage(), containsString(setting.getKey()));
+            assertThat(e.getMessage(), containsString(">= 1"));
+        }
     }
 
     public void testByteLimitBounds() {
@@ -88,6 +109,7 @@ public class PhantomQueriesSettingsTests extends ESTestCase {
             .put(PhantomQueriesSettings.MAX_QUERIES_PER_SAMPLE_SETTING.getKey(), 7)
             .put(PhantomQueriesSettings.MAX_BYTES_PER_SAMPLE_SETTING.getKey(), "2kb")
             .put(PhantomQueriesSettings.MAX_BYTES_PER_NODE_SETTING.getKey(), "3mb")
+            .put(PhantomQueriesSettings.MAX_CONCURRENT_PER_NODE_SETTING.getKey(), 5)
             .build();
         final var settings = new PhantomQueriesSettings(clusterSettings(nodeSettings));
 
@@ -95,6 +117,7 @@ public class PhantomQueriesSettingsTests extends ESTestCase {
         assertThat(settings.maxQueriesPerSample(), equalTo(7));
         assertThat(settings.maxBytesPerSample(), equalTo(ByteSizeValue.ofKb(2).getBytes()));
         assertThat(settings.maxBytesPerNode(), equalTo(ByteSizeValue.ofMb(3).getBytes()));
+        assertThat(settings.maxConcurrentPerNode(), equalTo(5));
     }
 
     public void testCurrentValuesDefaultToDisabled() {
@@ -104,6 +127,7 @@ public class PhantomQueriesSettingsTests extends ESTestCase {
         assertThat(settings.maxQueriesPerSample(), equalTo(100));
         assertThat(settings.maxBytesPerSample(), equalTo(ByteSizeValue.ofMb(1).getBytes()));
         assertThat(settings.maxBytesPerNode(), equalTo(ByteSizeValue.ofMb(16).getBytes()));
+        assertThat(settings.maxConcurrentPerNode(), equalTo(2));
     }
 
     public void testCurrentValuesFollowDynamicUpdates() {
@@ -117,18 +141,21 @@ public class PhantomQueriesSettingsTests extends ESTestCase {
                 .put(PhantomQueriesSettings.MAX_QUERIES_PER_SAMPLE_SETTING.getKey(), 0)
                 .put(PhantomQueriesSettings.MAX_BYTES_PER_SAMPLE_SETTING.getKey(), "10b")
                 .put(PhantomQueriesSettings.MAX_BYTES_PER_NODE_SETTING.getKey(), "20b")
+                .put(PhantomQueriesSettings.MAX_CONCURRENT_PER_NODE_SETTING.getKey(), 9)
                 .build()
         );
         assertThat(settings.enabled(), is(true));
         assertThat(settings.maxQueriesPerSample(), equalTo(0));
         assertThat(settings.maxBytesPerSample(), equalTo(10L));
         assertThat(settings.maxBytesPerNode(), equalTo(20L));
+        assertThat(settings.maxConcurrentPerNode(), equalTo(9));
 
         clusterSettings.applySettings(Settings.EMPTY);
         assertThat(settings.enabled(), is(false));
         assertThat(settings.maxQueriesPerSample(), equalTo(100));
         assertThat(settings.maxBytesPerSample(), equalTo(ByteSizeValue.ofMb(1).getBytes()));
         assertThat(settings.maxBytesPerNode(), equalTo(ByteSizeValue.ofMb(16).getBytes()));
+        assertThat(settings.maxConcurrentPerNode(), equalTo(2));
     }
 
     public void testSettingsListContainsEverySetting() {
@@ -138,7 +165,8 @@ public class PhantomQueriesSettingsTests extends ESTestCase {
                 PhantomQueriesSettings.ENABLED_SETTING,
                 PhantomQueriesSettings.MAX_QUERIES_PER_SAMPLE_SETTING,
                 PhantomQueriesSettings.MAX_BYTES_PER_SAMPLE_SETTING,
-                PhantomQueriesSettings.MAX_BYTES_PER_NODE_SETTING
+                PhantomQueriesSettings.MAX_BYTES_PER_NODE_SETTING,
+                PhantomQueriesSettings.MAX_CONCURRENT_PER_NODE_SETTING
             )
         );
     }

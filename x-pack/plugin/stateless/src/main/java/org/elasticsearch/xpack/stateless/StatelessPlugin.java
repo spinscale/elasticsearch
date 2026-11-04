@@ -1605,7 +1605,8 @@ public class StatelessPlugin extends Plugin
             PhantomQueriesSettings.ENABLED_SETTING,
             PhantomQueriesSettings.MAX_QUERIES_PER_SAMPLE_SETTING,
             PhantomQueriesSettings.MAX_BYTES_PER_SAMPLE_SETTING,
-            PhantomQueriesSettings.MAX_BYTES_PER_NODE_SETTING
+            PhantomQueriesSettings.MAX_BYTES_PER_NODE_SETTING,
+            PhantomQueriesSettings.MAX_CONCURRENT_PER_NODE_SETTING
         );
     }
 

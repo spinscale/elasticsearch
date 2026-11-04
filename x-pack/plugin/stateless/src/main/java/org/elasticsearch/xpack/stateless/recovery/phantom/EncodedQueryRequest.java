@@ -27,15 +27,21 @@ public record EncodedQueryRequest(BytesReference bytes, TransportVersion version
         return bytes.length();
     }
 
+    /**
+     * A new request on every call, because executing one rewrites it in place.
+     */
+    ShardSearchRequest decode(NamedWriteableRegistry namedWriteableRegistry) throws IOException {
+        try (var in = new NamedWriteableAwareStreamInput(bytes.streamInput(), namedWriteableRegistry)) {
+            in.setTransportVersion(version);
+            return new ShardSearchRequest(in);
+        }
+    }
+
     EncodedQueryRequest reencode(TransportVersion targetVersion, NamedWriteableRegistry namedWriteableRegistry) throws IOException {
         if (version.equals(targetVersion)) {
             return this;
         }
-        final ShardSearchRequest request;
-        try (var in = new NamedWriteableAwareStreamInput(bytes.streamInput(), namedWriteableRegistry)) {
-            in.setTransportVersion(version);
-            request = new ShardSearchRequest(in);
-        }
+        final ShardSearchRequest request = decode(namedWriteableRegistry);
         try (var out = new BytesStreamOutput()) {
             out.setTransportVersion(targetVersion);
             request.writeTo(out);

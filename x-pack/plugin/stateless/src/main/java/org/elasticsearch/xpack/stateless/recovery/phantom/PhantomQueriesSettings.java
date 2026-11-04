@@ -50,20 +50,39 @@ public class PhantomQueriesSettings {
         Setting.Property.NodeScope
     );
 
+    /**
+     * How many phantom queries run at once on this node, across all the shards that replay a sample.
+     */
+    public static final Setting<Integer> MAX_CONCURRENT_PER_NODE_SETTING = Setting.intSetting(
+        PREFIX + "max_concurrent_per_node",
+        2,
+        1,
+        Setting.Property.Dynamic,
+        Setting.Property.NodeScope
+    );
+
     private volatile boolean enabled;
     private volatile int maxQueriesPerSample;
     private volatile long maxBytesPerSample;
     private volatile long maxBytesPerNode;
+    private volatile int maxConcurrentPerNode;
 
     public PhantomQueriesSettings(ClusterSettings clusterSettings) {
         clusterSettings.initializeAndWatch(ENABLED_SETTING, value -> this.enabled = value);
         clusterSettings.initializeAndWatch(MAX_QUERIES_PER_SAMPLE_SETTING, value -> this.maxQueriesPerSample = value);
         clusterSettings.initializeAndWatch(MAX_BYTES_PER_SAMPLE_SETTING, value -> this.maxBytesPerSample = value.getBytes());
         clusterSettings.initializeAndWatch(MAX_BYTES_PER_NODE_SETTING, value -> this.maxBytesPerNode = value.getBytes());
+        clusterSettings.initializeAndWatch(MAX_CONCURRENT_PER_NODE_SETTING, value -> this.maxConcurrentPerNode = value);
     }
 
     public static List<Setting<?>> settings() {
-        return List.of(ENABLED_SETTING, MAX_QUERIES_PER_SAMPLE_SETTING, MAX_BYTES_PER_SAMPLE_SETTING, MAX_BYTES_PER_NODE_SETTING);
+        return List.of(
+            ENABLED_SETTING,
+            MAX_QUERIES_PER_SAMPLE_SETTING,
+            MAX_BYTES_PER_SAMPLE_SETTING,
+            MAX_BYTES_PER_NODE_SETTING,
+            MAX_CONCURRENT_PER_NODE_SETTING
+        );
     }
 
     public boolean enabled() {
@@ -80,5 +99,9 @@ public class PhantomQueriesSettings {
 
     public long maxBytesPerNode() {
         return maxBytesPerNode;
+    }
+
+    public int maxConcurrentPerNode() {
+        return maxConcurrentPerNode;
     }
 }

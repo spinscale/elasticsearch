@@ -163,6 +163,7 @@ import org.elasticsearch.xpack.stateless.recovery.TransportStatelessPrimaryReloc
 import org.elasticsearch.xpack.stateless.recovery.TransportStatelessUnpromotableRelocationAction;
 import org.elasticsearch.xpack.stateless.recovery.metering.StatelessPrimaryRelocationMetricsCollector;
 import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueriesSettings;
+import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryMetrics;
 import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQuerySamplers;
 import org.elasticsearch.xpack.stateless.reshard.ReshardIndexService;
 import org.elasticsearch.xpack.stateless.reshard.ReshardSearchFilters;
@@ -615,6 +616,7 @@ public class StatelessSnapshotResiliencyTests extends SnapshotResiliencyTests {
                         testStatelessPlugin.cacheWarmingService.searchRecoveryWarmingWindows(),
                         mock(PhantomQuerySamplers.class),
                         mock(PhantomQueriesSettings.class),
+                        new PhantomQueryMetrics(MeterRegistry.NOOP),
                         new NamedWriteableRegistry(List.of())
                     ),
                     TransportShardRefreshAction.TYPE,
