@@ -8,19 +8,24 @@
 package org.elasticsearch.xpack.stateless.recovery;
 
 import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.TransportVersion;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionResponse;
 import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.PlainActionFuture;
+import org.elasticsearch.action.support.replication.ClusterStateCreationUtils;
 import org.elasticsearch.cluster.ClusterState;
+import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodeUtils;
 import org.elasticsearch.cluster.project.TestProjectResolvers;
 import org.elasticsearch.cluster.routing.ShardRouting;
 import org.elasticsearch.cluster.routing.ShardRoutingState;
 import org.elasticsearch.cluster.routing.TestShardRouting;
 import org.elasticsearch.cluster.service.ClusterService;
+import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.settings.ClusterSettings;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.core.Tuple;
 import org.elasticsearch.index.IndexService;
 import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.index.shard.ShardId;
@@ -38,25 +43,43 @@ import org.elasticsearch.telemetry.metric.MeterRegistry;
 import org.elasticsearch.test.ESTestCase;
 import org.elasticsearch.test.IndexSettingsModule;
 import org.elasticsearch.threadpool.TestThreadPool;
+import org.elasticsearch.transport.Transport;
+import org.elasticsearch.transport.TransportException;
+import org.elasticsearch.transport.TransportRequest;
+import org.elasticsearch.transport.TransportRequestOptions;
+import org.elasticsearch.transport.TransportResponseHandler;
 import org.elasticsearch.transport.TransportService;
 import org.elasticsearch.xpack.stateless.StatelessComponents;
 import org.elasticsearch.xpack.stateless.cache.SearchRecoveryWarmingWindows;
 import org.elasticsearch.xpack.stateless.engine.translog.TranslogReplicator;
 import org.elasticsearch.xpack.stateless.objectstore.ObjectStoreService;
+import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueriesSettings;
+import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQuerySample;
+import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQuerySamplers;
+import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQuerySamplingActions;
 import org.junit.After;
 import org.junit.Before;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.elasticsearch.cluster.metadata.Metadata.DEFAULT_PROJECT_ID;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class TransportStatelessUnpromotableRelocationActionTests extends ESTestCase {
@@ -71,19 +94,23 @@ public class TransportStatelessUnpromotableRelocationActionTests extends ESTestC
     private String allocationId;
     private TransportStatelessUnpromotableRelocationAction action;
     private final AtomicReference<ActionListener<Void>> preRecoveryListener = new AtomicReference<>();
+    private final SearchService searchService = mock(SearchService.class);
+    private final PhantomQueriesSettings phantomQueriesSettings = mock(PhantomQueriesSettings.class);
+    private TransportService transportService;
+    private ClusterService clusterService;
 
     @Before
     public void setUpAction() {
         threadPool = new TestThreadPool(getTestName());
         windows = new SearchRecoveryWarmingWindows();
-        shardId = new ShardId(randomIdentifier(), randomUUID(), randomIntBetween(0, 5));
+        shardId = new ShardId(randomIdentifier(), "_na_", 0);
         allocationId = randomIdentifier();
 
-        final var transportService = mock(TransportService.class);
+        transportService = mock(TransportService.class);
         when(transportService.getTaskManager()).thenReturn(mock(TaskManager.class));
         when(transportService.getThreadPool()).thenReturn(threadPool);
 
-        final var clusterService = mock(ClusterService.class);
+        clusterService = mock(ClusterService.class);
         when(clusterService.getSettings()).thenReturn(Settings.EMPTY);
         when(clusterService.getClusterSettings()).thenReturn(ClusterSettings.createBuiltInClusterSettings());
         when(clusterService.state()).thenReturn(ClusterState.EMPTY_STATE);
@@ -125,11 +152,14 @@ public class TransportStatelessUnpromotableRelocationActionTests extends ESTestC
             indicesService,
             peerRecoveryTargetService,
             TestProjectResolvers.DEFAULT_PROJECT_ONLY,
-            mock(SearchService.class),
+            searchService,
             new PITRelocationService(),
             new StatelessComponents(mock(TranslogReplicator.class), mock(ObjectStoreService.class)),
             new PitRelocationMetrics(MeterRegistry.NOOP),
-            windows
+            windows,
+            mock(PhantomQuerySamplers.class),
+            phantomQueriesSettings,
+            new NamedWriteableRegistry(List.of())
         );
     }
 
@@ -235,4 +265,176 @@ public class TransportStatelessUnpromotableRelocationActionTests extends ESTestC
         assertThat(windows.relativeDeadlineMillis(shardId, otherAllocationId), equalTo(OptionalLong.of(2_000L)));
         assertThat(windows.relativeDeadlineMillis(otherShardId, allocationId), equalTo(OptionalLong.of(3_000L)));
     }
+
+    private record SentToPeer(String action, TransportRequest request, TransportResponseHandler<?> handler) {}
+
+    private final List<SentToPeer> sentToPeer = new ArrayList<>();
+
+    private void enablePhantomQueriesWithAStartedPeer() {
+        when(phantomQueriesSettings.enabled()).thenReturn(true);
+        final ClusterState state = ClusterStateCreationUtils.state(
+            DEFAULT_PROJECT_ID,
+            shardId.getIndexName(),
+            true,
+            ShardRoutingState.STARTED,
+            ShardRouting.Role.INDEX_ONLY,
+            List.of(
+                new Tuple<>(ShardRoutingState.STARTED, ShardRouting.Role.SEARCH_ONLY),
+                new Tuple<>(ShardRoutingState.INITIALIZING, ShardRouting.Role.SEARCH_ONLY)
+            )
+        );
+        final ShardRouting recovering = state.routingTable(DEFAULT_PROJECT_ID)
+            .shardRoutingTable(shardId)
+            .allShards()
+            .filter(ShardRouting::initializing)
+            .findFirst()
+            .orElseThrow();
+        allocationId = recovering.allocationId().getId();
+        when(indexShard.routingEntry()).thenReturn(recovering);
+        when(clusterService.state()).thenReturn(state);
+        when(clusterService.localNode()).thenReturn(state.nodes().get(recovering.currentNodeId()));
+        final var connection = mock(Transport.Connection.class);
+        when(connection.getTransportVersion()).thenReturn(TransportVersion.current());
+        when(transportService.getConnection(any(DiscoveryNode.class))).thenReturn(connection);
+        doAnswer(invocation -> {
+            sentToPeer.add(new SentToPeer(invocation.getArgument(1), invocation.getArgument(2), invocation.getArgument(5)));
+            return null;
+        }).when(transportService)
+            .sendChildRequest(
+                any(Transport.Connection.class),
+                anyString(),
+                any(TransportRequest.class),
+                any(Task.class),
+                any(TransportRequestOptions.class),
+                any()
+            );
+    }
+
+    private List<String> actionsSentToPeer() {
+        return sentToPeer.stream().map(SentToPeer::action).toList();
+    }
+
+    private void startWarmingWindowWithTimeLeft() {
+        windows.startWindow(shardId, allocationId, threadPool.relativeTimeInMillis() + 60_000L);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void answerLastRequestToPeer(PhantomQuerySample sample) {
+        final var handler = (TransportResponseHandler<PhantomQuerySamplingActions.CollectSampleResponse>) sentToPeer.getLast().handler();
+        handler.handleResponse(new PhantomQuerySamplingActions.CollectSampleResponse(sample));
+    }
+
+    public void testSamplingStartsBeforeTheWarmingWaitAndTheSampleIsCollectedOnceTheEngineIsOpen() throws Exception {
+        enablePhantomQueriesWithAStartedPeer();
+        startWarmingWindowWithTimeLeft();
+
+        final var response = startRecovery();
+
+        assertThat("sampling starts before the recovery waits for warming", actionsSentToPeer(), equalTo(List.of(START_SAMPLING)));
+        assertThat(sentToPeer.get(0).request(), instanceOf(PhantomQuerySamplingActions.StartSamplingRequest.class));
+        assertThat("the recovery waits for warming, and not for the peer", preRecoveryListener.get(), notNullValue());
+        assertThat(response.isDone(), is(false));
+        verify(indexShard, never()).openEngineAndSkipTranslogRecovery();
+
+        preRecoveryListener.get().onResponse(null);
+
+        verify(indexShard).openEngineAndSkipTranslogRecovery();
+        assertThat(actionsSentToPeer(), equalTo(List.of(START_SAMPLING, COLLECT_SAMPLE)));
+        assertThat("the recovery waits for the sample", response.isDone(), is(false));
+
+        answerLastRequestToPeer(PhantomQuerySample.EMPTY);
+        assertThat(safeGet(response), equalTo(ActionResponse.Empty.INSTANCE));
+        assertThat(windowDeadline(), equalTo(OptionalLong.empty()));
+    }
+
+    public void testSampleIsCollectedWhetherOrNotPitRelocationIsEnabled() {
+        when(searchService.isPitRelocationEnabled()).thenReturn(randomBoolean());
+        enablePhantomQueriesWithAStartedPeer();
+        startWarmingWindowWithTimeLeft();
+        final var response = startRecovery();
+
+        preRecoveryListener.get().onResponse(null);
+
+        assertThat(actionsSentToPeer(), equalTo(List.of(START_SAMPLING, COLLECT_SAMPLE)));
+        answerLastRequestToPeer(PhantomQuerySample.EMPTY);
+        assertThat(safeGet(response), equalTo(ActionResponse.Empty.INSTANCE));
+    }
+
+    public void testNoSampleIsCollectedWhenTheWarmingWindowIsUsedUp() {
+        enablePhantomQueriesWithAStartedPeer();
+        windows.startWindow(shardId, allocationId, threadPool.relativeTimeInMillis() - randomLongBetween(0, 60_000L));
+        final var response = startRecovery();
+
+        preRecoveryListener.get().onResponse(null);
+
+        assertThat(
+            "the peer was asked to sample, but the sample is not worth collecting",
+            actionsSentToPeer(),
+            equalTo(List.of(START_SAMPLING))
+        );
+        assertThat(safeGet(response), equalTo(ActionResponse.Empty.INSTANCE));
+    }
+
+    public void testNoSampleIsCollectedWhenTheRecoveryHasNoWarmingWindow() {
+        enablePhantomQueriesWithAStartedPeer();
+        final var response = startRecovery();
+
+        preRecoveryListener.get().onResponse(null);
+
+        assertThat(actionsSentToPeer(), equalTo(List.of(START_SAMPLING)));
+        assertThat(safeGet(response), equalTo(ActionResponse.Empty.INSTANCE));
+    }
+
+    public void testNothingIsSentToPeersWhilePhantomQueriesAreDisabled() {
+        enablePhantomQueriesWithAStartedPeer();
+        when(phantomQueriesSettings.enabled()).thenReturn(false);
+        startWarmingWindowWithTimeLeft();
+        final var response = startRecovery();
+
+        preRecoveryListener.get().onResponse(null);
+
+        assertThat(sentToPeer.isEmpty(), is(true));
+        assertThat(safeGet(response), equalTo(ActionResponse.Empty.INSTANCE));
+    }
+
+    public void testNoSampleIsCollectedWhenTheRecoveryFailsBeforeTheEngineIsOpen() {
+        enablePhantomQueriesWithAStartedPeer();
+        startWarmingWindowWithTimeLeft();
+        final var failure = new ElasticsearchException("simulated");
+
+        final var thrown = safeAwaitFailure(ActionResponse.Empty.class, listener -> {
+            startRecovery(listener);
+            preRecoveryListener.get().onFailure(failure);
+        });
+
+        assertSame(failure, thrown);
+        assertThat(actionsSentToPeer(), equalTo(List.of(START_SAMPLING)));
+    }
+
+    public void testFailureToCollectTheSampleDoesNotFailTheRecovery() {
+        enablePhantomQueriesWithAStartedPeer();
+        startWarmingWindowWithTimeLeft();
+        final var response = startRecovery();
+        preRecoveryListener.get().onResponse(null);
+        assertThat(actionsSentToPeer(), equalTo(List.of(START_SAMPLING, COLLECT_SAMPLE)));
+
+        sentToPeer.getLast().handler().handleException(new TransportException("simulated, for example a timeout"));
+
+        assertThat(safeGet(response), equalTo(ActionResponse.Empty.INSTANCE));
+    }
+
+    public void testFailureToStartSamplingDoesNotFailTheRecovery() {
+        enablePhantomQueriesWithAStartedPeer();
+        doThrow(new IllegalStateException("simulated")).when(transportService).getConnection(any(DiscoveryNode.class));
+        startWarmingWindowWithTimeLeft();
+        final var response = startRecovery();
+
+        preRecoveryListener.get().onResponse(null);
+
+        assertThat(safeGet(response), equalTo(ActionResponse.Empty.INSTANCE));
+        assertThat(sentToPeer.isEmpty(), is(true));
+    }
+
+    private static final String START_SAMPLING = PhantomQuerySamplingActions.START_SAMPLING_ACTION_NAME;
+    private static final String COLLECT_SAMPLE = PhantomQuerySamplingActions.COLLECT_SAMPLE_ACTION_NAME;
 }

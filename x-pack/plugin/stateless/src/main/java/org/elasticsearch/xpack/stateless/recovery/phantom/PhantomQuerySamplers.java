@@ -83,7 +83,7 @@ public class PhantomQuerySamplers implements IndexEventListener, ClusterStateLis
     }
 
     public boolean startSampling(ShardId shardId, String targetAllocationId) {
-        if (settings.enabled() == false || isInitializingCopy(clusterService.state(), shardId, targetAllocationId) == false) {
+        if (settings.enabled() == false || isInitializingReplica(clusterService.state(), shardId, targetAllocationId) == false) {
             return false;
         }
         entriesByShard.compute(shardId, (id, current) -> {
@@ -100,7 +100,7 @@ public class PhantomQuerySamplers implements IndexEventListener, ClusterStateLis
         });
         // the copy may have started after the check above and after the cluster state listener last ran, in which case only the lease
         // would end this sampler
-        if (isInitializingCopy(clusterService.state(), shardId, targetAllocationId) == false) {
+        if (isInitializingReplica(clusterService.state(), shardId, targetAllocationId) == false) {
             discard(removeIf(shardId, (allocationId, entry) -> allocationId.equals(targetAllocationId)));
             return false;
         }
@@ -147,7 +147,7 @@ public class PhantomQuerySamplers implements IndexEventListener, ClusterStateLis
         }
         final ClusterState state = event.state();
         for (ShardId shardId : entriesByShard.keySet()) {
-            discard(removeIf(shardId, (allocationId, entry) -> isInitializingCopy(state, shardId, allocationId) == false));
+            discard(removeIf(shardId, (allocationId, entry) -> isInitializingReplica(state, shardId, allocationId) == false));
         }
     }
 
@@ -189,24 +189,30 @@ public class PhantomQuerySamplers implements IndexEventListener, ClusterStateLis
         }
     }
 
-    static boolean isInitializingCopy(ClusterState state, ShardId shardId, String allocationId) {
+    static boolean isInitializingReplica(ClusterState state, ShardId shardId, String allocationId) {
+        final ShardRouting routing = findReplica(state, shardId, allocationId);
+        return routing != null && routing.initializing();
+    }
+
+    // never the primary: in stateless it is on an indexing node, and only replicas are search copies
+    @Nullable
+    static ShardRouting findReplica(ClusterState state, ShardId shardId, String allocationId) {
+        final IndexShardRoutingTable shardRoutingTable = findShardRoutingTable(state, shardId);
+        final ShardRouting routing = shardRoutingTable == null ? null : shardRoutingTable.getByAllocationId(allocationId);
+        return routing == null || routing.primary() ? null : routing;
+    }
+
+    @Nullable
+    static IndexShardRoutingTable findShardRoutingTable(ClusterState state, ShardId shardId) {
         final ProjectMetadata project = state.metadata().lookupProject(shardId.getIndex()).orElse(null);
         if (project == null) {
-            return false;
+            return null;
         }
         final RoutingTable routingTable = state.globalRoutingTable().routingTables().get(project.id());
         if (routingTable == null) {
-            return false;
+            return null;
         }
         final IndexRoutingTable indexRoutingTable = routingTable.index(shardId.getIndex());
-        if (indexRoutingTable == null) {
-            return false;
-        }
-        final IndexShardRoutingTable shardRoutingTable = indexRoutingTable.shard(shardId.id());
-        if (shardRoutingTable == null) {
-            return false;
-        }
-        final ShardRouting routing = shardRoutingTable.getByAllocationId(allocationId);
-        return routing != null && routing.initializing();
+        return indexRoutingTable == null ? null : indexRoutingTable.shard(shardId.id());
     }
 }

@@ -44,6 +44,7 @@ import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.cluster.version.CompatibilityVersions;
 import org.elasticsearch.common.blobstore.BlobStore;
 import org.elasticsearch.common.breaker.NoopCircuitBreaker;
+import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.lucene.Lucene;
 import org.elasticsearch.common.settings.ClusterSettings;
 import org.elasticsearch.common.settings.Setting;
@@ -161,6 +162,8 @@ import org.elasticsearch.xpack.stateless.recovery.TransportStatelessPrimaryReloc
 import org.elasticsearch.xpack.stateless.recovery.TransportStatelessPrimaryRelocationPrewarmAction;
 import org.elasticsearch.xpack.stateless.recovery.TransportStatelessUnpromotableRelocationAction;
 import org.elasticsearch.xpack.stateless.recovery.metering.StatelessPrimaryRelocationMetricsCollector;
+import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueriesSettings;
+import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQuerySamplers;
 import org.elasticsearch.xpack.stateless.reshard.ReshardIndexService;
 import org.elasticsearch.xpack.stateless.reshard.ReshardSearchFilters;
 import org.elasticsearch.xpack.stateless.reshard.SplitSourceService;
@@ -609,7 +612,10 @@ public class StatelessSnapshotResiliencyTests extends SnapshotResiliencyTests {
                         new PITRelocationService(),
                         new StatelessComponents(mock(TranslogReplicator.class), testStatelessPlugin.objectStoreService),
                         new PitRelocationMetrics(MeterRegistry.NOOP),
-                        testStatelessPlugin.cacheWarmingService.searchRecoveryWarmingWindows()
+                        testStatelessPlugin.cacheWarmingService.searchRecoveryWarmingWindows(),
+                        mock(PhantomQuerySamplers.class),
+                        mock(PhantomQueriesSettings.class),
+                        new NamedWriteableRegistry(List.of())
                     ),
                     TransportShardRefreshAction.TYPE,
                     new TransportShardRefreshAction(

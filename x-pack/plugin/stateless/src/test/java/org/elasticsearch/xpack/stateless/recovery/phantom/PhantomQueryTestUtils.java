@@ -24,6 +24,7 @@ import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.core.Tuple;
+import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.search.SearchModule;
@@ -87,6 +88,16 @@ final class PhantomQueryTestUtils {
         return shardSearchRequest(shardId, searchRequest(value).searchType(SearchType.DFS_QUERY_THEN_FETCH), null);
     }
 
+    static ShardSearchRequest queryRequest(ShardId shardId, QueryBuilder query) {
+        final var searchRequest = new SearchRequest(INDEX_NAME).source(new SearchSourceBuilder().query(query));
+        searchRequest.allowPartialSearchResults(true);
+        return shardSearchRequest(shardId, searchRequest, null);
+    }
+
+    static EncodedQueryRequest encode(ShardSearchRequest request) {
+        return new ObservedQueryRequest(request).encoded();
+    }
+
     private static ShardSearchRequest shardSearchRequest(ShardId shardId, SearchRequest searchRequest, ShardSearchContextId readerId) {
         return new ShardSearchRequest(
             new OriginalIndices(searchRequest),
@@ -124,6 +135,11 @@ final class PhantomQueryTestUtils {
             replicas.add(new Tuple<>(INITIALIZING, ShardRouting.Role.SEARCH_ONLY));
         }
         return ClusterStateCreationUtils.state(DEFAULT_PROJECT_ID, INDEX_NAME, true, STARTED, ShardRouting.Role.INDEX_ONLY, replicas);
+    }
+
+    // a DEFAULT primary is searchable like in a stateful cluster, so that only it being a primary tells it apart from a search copy
+    static ClusterState clusterStateWithInitializingPrimary(ShardRouting.Role primaryRole) {
+        return ClusterStateCreationUtils.state(DEFAULT_PROJECT_ID, INDEX_NAME, true, INITIALIZING, primaryRole, List.of());
     }
 
     /** The initializing target of the relocation is not a shard of its own in the routing table: the relocating source implies it. */

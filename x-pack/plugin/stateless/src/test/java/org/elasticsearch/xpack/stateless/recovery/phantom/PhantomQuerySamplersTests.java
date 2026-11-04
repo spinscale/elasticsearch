@@ -166,6 +166,45 @@ public class PhantomQuerySamplersTests extends ESTestCase {
         assertThat(taskQueue.hasDeferredTasks(), is(false));
     }
 
+    public void testStartSamplingIsDeclinedForAPrimary() {
+        final ClusterState withInitializingPrimary = PhantomQueryTestUtils.clusterStateWithInitializingPrimary(
+            randomFrom(ShardRouting.Role.INDEX_ONLY, ShardRouting.Role.DEFAULT)
+        );
+        state.set(withInitializingPrimary);
+        final String primary = initializingAllocationId(withInitializingPrimary);
+
+        assertThat(samplers.startSampling(shardId, primary), is(false));
+
+        assertNothingIsLeftBehind();
+        assertThat(taskQueue.hasDeferredTasks(), is(false));
+    }
+
+    public void testReplicaLookupNeverFindsThePrimary() {
+        final ClusterState clusterState = clusterStateWithInitializingSearchReplica();
+        int replicas = 0;
+        for (ShardRouting routing : shards(clusterState)) {
+            final ShardRouting found = PhantomQuerySamplers.findReplica(clusterState, shardId, routing.allocationId().getId());
+            if (routing.primary()) {
+                assertThat(found, is((ShardRouting) null));
+                assertThat(PhantomQuerySamplers.isInitializingReplica(clusterState, shardId, routing.allocationId().getId()), is(false));
+            } else {
+                replicas++;
+                assertThat(found.allocationId().getId(), equalTo(routing.allocationId().getId()));
+            }
+        }
+        assertThat(replicas, equalTo(2));
+
+        final ClusterState relocating = clusterStateWithRelocatingSearchReplica();
+        final ShardRouting source = shards(relocating).stream().filter(ShardRouting::relocating).findFirst().orElseThrow();
+        final ShardRouting target = source.getTargetRelocatingShard();
+        assertThat(
+            "the target of a relocation of a replica is a replica",
+            PhantomQuerySamplers.findReplica(relocating, shardId, target.allocationId().getId()).allocationId().getId(),
+            equalTo(target.allocationId().getId())
+        );
+        assertThat(PhantomQuerySamplers.isInitializingReplica(relocating, shardId, target.allocationId().getId()), is(true));
+    }
+
     public void testStartSamplingIsDeclinedForAShardThatDoesNotExist() {
         assertThat(
             samplers.startSampling(new ShardId(randomAlphaOfLength(8), randomAlphaOfLength(8), 0), initializingAllocationId(state.get())),

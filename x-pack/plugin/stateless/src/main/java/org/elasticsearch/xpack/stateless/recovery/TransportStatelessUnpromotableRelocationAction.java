@@ -35,6 +35,7 @@ import org.elasticsearch.cluster.project.ProjectResolver;
 import org.elasticsearch.cluster.routing.SplitShardCountSummary;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.blobstore.support.BlobMetadata;
+import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
@@ -70,6 +71,11 @@ import org.elasticsearch.xpack.stateless.commits.StatelessCompoundCommit;
 import org.elasticsearch.xpack.stateless.engine.SearchEngine;
 import org.elasticsearch.xpack.stateless.lucene.SearchDirectory;
 import org.elasticsearch.xpack.stateless.objectstore.ObjectStoreService;
+import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueriesSettings;
+import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQuerySample;
+import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQuerySampleRequester;
+import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQuerySamplers;
+import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQuerySamplingPeer;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -120,6 +126,7 @@ public class TransportStatelessUnpromotableRelocationAction extends TransportAct
     private final ObjectStoreService objectStoreService;
     private final PitRelocationMetrics pitRelocationMetrics;
     private final SearchRecoveryWarmingWindows searchRecoveryWarmingWindows;
+    private final PhantomQuerySampleRequester phantomQuerySampleRequester;
 
     private static final Logger logger = LogManager.getLogger(TransportStatelessUnpromotableRelocationAction.class);
 
@@ -135,7 +142,10 @@ public class TransportStatelessUnpromotableRelocationAction extends TransportAct
         PITRelocationService pitRelocationService,
         StatelessComponents statelessComponents,
         PitRelocationMetrics pitRelocationMetrics,
-        SearchRecoveryWarmingWindows searchRecoveryWarmingWindows
+        SearchRecoveryWarmingWindows searchRecoveryWarmingWindows,
+        PhantomQuerySamplers phantomQuerySamplers,
+        PhantomQueriesSettings phantomQueriesSettings,
+        NamedWriteableRegistry namedWriteableRegistry
     ) {
         super(TYPE.name(), actionFilters, transportService.getTaskManager(), EsExecutors.DIRECT_EXECUTOR_SERVICE);
         this.transportService = transportService;
@@ -162,6 +172,16 @@ public class TransportStatelessUnpromotableRelocationAction extends TransportAct
             false,
             StartHandoffRequest::new,
             (request, channel, task) -> handleStartHandoff(request, new ChannelActionListener<>(channel))
+        );
+        new PhantomQuerySamplingPeer(clusterService, indicesService, phantomQuerySamplers, phantomQueriesSettings, namedWriteableRegistry)
+            .registerHandlers(transportService, recoveryExecutor);
+        this.phantomQuerySampleRequester = new PhantomQuerySampleRequester(
+            transportService,
+            clusterService,
+            phantomQueriesSettings,
+            searchRecoveryWarmingWindows,
+            recoveryExecutor,
+            startHandoffRequestTimeout
         );
         this.pitRelocationService.setActiveReaderContextProvider(searchService::getActivePITContexts);
         clusterService.getClusterSettings()
@@ -190,6 +210,9 @@ public class TransportStatelessUnpromotableRelocationAction extends TransportAct
                 () -> searchRecoveryWarmingWindows.removeWindow(request.getShardId(), request.getTargetAllocationId())
             );
 
+            // started before the warming wait, so that the peer samples while the recovery waits
+            final var sampling = phantomQuerySampleRequester.startSampling(task, indexShard.routingEntry());
+
             SubscribableListener.<Void>newForked(l -> {
                 indexShard.ensureRecoveryNotCancelled();
                 indexShard.preRecovery(l);
@@ -207,6 +230,8 @@ public class TransportStatelessUnpromotableRelocationAction extends TransportAct
             })
                 .<RelocationHandoffResponse>andThen(l -> maybeSendStartHandoffRequest(indexShard, task, request, l))
                 .<Void>andThen((l, response) -> handlePitHandoffResponse(indexShard, response.pitHandoffResponse, l))
+                // the sample is not used yet
+                .<PhantomQuerySample>andThen(l -> sampling.collectSample(task, l))
                 .andThenApply(unused -> Empty.INSTANCE)
                 .addListener(listenerRemovingWarmingWindow);
         }

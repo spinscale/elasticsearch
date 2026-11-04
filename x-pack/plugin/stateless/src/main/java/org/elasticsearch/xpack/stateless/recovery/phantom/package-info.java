@@ -11,4 +11,7 @@
 /// A peer copy that already serves the shard keeps the sample, because it is the one that receives the shard's queries. The sample is
 /// bounded per recovering copy and per node, since a peer may sample for many recovering copies at once and holds the requests on the
 /// heap.
+///
+/// The recovering copy drives the transfer: it asks its peer to start sampling when its recovery starts and collects the sample once its
+/// engine is open, see [PhantomQuerySampleRequester] and [PhantomQuerySamplingPeer].
 package org.elasticsearch.xpack.stateless.recovery.phantom;
