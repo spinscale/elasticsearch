@@ -28,12 +28,15 @@ import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.threadpool.Scheduler;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.xpack.stateless.cache.SearchRecoveryTimeoutCalculationService;
+import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryMetrics.SamplerEnd;
+import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryMetrics.SamplingStartOutcome;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiPredicate;
 import java.util.function.Consumer;
 
@@ -80,15 +83,25 @@ public class PhantomQuerySamplers implements IndexEventListener, ClusterStateLis
                 SearchRecoveryTimeoutCalculationService.OFFLINE_WARMING_TOTAL_TIMEOUT_CAP_SETTING,
                 value -> this.leaseDuration = value
             );
+        metrics.registerSamplerGauges(this::samplerCount, nodeBudget::usedInBytes);
     }
 
-    public boolean startSampling(ShardId shardId, String targetAllocationId) {
-        if (settings.enabled() == false || isInitializingReplica(clusterService.state(), shardId, targetAllocationId) == false) {
-            return false;
+    /**
+     * Starts sampling for the copy, and says whether the node samples for it afterwards and, if not, why.
+     */
+    public SamplingStartOutcome startSampling(ShardId shardId, String targetAllocationId) {
+        if (settings.enabled() == false) {
+            return SamplingStartOutcome.DECLINED_DISABLED;
         }
+        final SamplingStartOutcome notInitializing = whyNotInitializingReplica(clusterService.state(), shardId, targetAllocationId);
+        if (notInitializing != null) {
+            return notInitializing;
+        }
+        final var alreadyStarted = new AtomicBoolean();
         entriesByShard.compute(shardId, (id, current) -> {
             if (current != null && current.containsKey(targetAllocationId)) {
                 // a retried recovery must not lose its sample
+                alreadyStarted.set(true);
                 return current;
             }
             final var sampler = new PhantomQuerySampler(settings.maxQueriesPerSample(), settings.maxBytesPerSample(), nodeBudget, metrics);
@@ -100,11 +113,12 @@ public class PhantomQuerySamplers implements IndexEventListener, ClusterStateLis
         });
         // the copy may have started after the check above and after the cluster state listener last ran, in which case only the lease
         // would end this sampler
-        if (isInitializingReplica(clusterService.state(), shardId, targetAllocationId) == false) {
-            discard(removeIf(shardId, (allocationId, entry) -> allocationId.equals(targetAllocationId)));
-            return false;
+        final SamplingStartOutcome gone = whyNotInitializingReplica(clusterService.state(), shardId, targetAllocationId);
+        if (gone != null) {
+            discard(removeIf(shardId, (allocationId, entry) -> allocationId.equals(targetAllocationId)), SamplerEnd.TARGET_GONE);
+            return gone;
         }
-        return true;
+        return alreadyStarted.get() ? SamplingStartOutcome.ALREADY_STARTED : SamplingStartOutcome.STARTED;
     }
 
     public List<EncodedQueryRequest> collect(ShardId shardId, String targetAllocationId) {
@@ -115,7 +129,11 @@ public class PhantomQuerySamplers implements IndexEventListener, ClusterStateLis
         final Entry entry = removed.get(0);
         entry.lease().cancel();
         logger.debug("{} collected the sample for the copy [{}]", shardId, targetAllocationId);
-        return entry.sampler().collect();
+        final List<EncodedQueryRequest> sample = entry.sampler().collect();
+        metrics.recordSamplerEnded(SamplerEnd.COLLECTED);
+        // an empty sample is recorded too, so that shards that receive no traffic show up
+        metrics.recordSampleCollected(sample.size(), sample.stream().mapToLong(EncodedQueryRequest::sizeInBytes).sum());
+        return sample;
     }
 
     // the observer calls this for every query-phase request of the node, so it has to stay a single map lookup
@@ -147,13 +165,16 @@ public class PhantomQuerySamplers implements IndexEventListener, ClusterStateLis
         }
         final ClusterState state = event.state();
         for (ShardId shardId : entriesByShard.keySet()) {
-            discard(removeIf(shardId, (allocationId, entry) -> isInitializingReplica(state, shardId, allocationId) == false));
+            discard(
+                removeIf(shardId, (allocationId, entry) -> isInitializingReplica(state, shardId, allocationId) == false),
+                SamplerEnd.TARGET_GONE
+            );
         }
     }
 
     @Override
     public void afterIndexShardClosed(ShardId shardId, @Nullable IndexShard indexShard, Settings indexSettings) {
-        discard(removeIf(shardId, (allocationId, entry) -> true));
+        discard(removeIf(shardId, (allocationId, entry) -> true), SamplerEnd.SHARD_CLOSED);
     }
 
     private void expire(ShardId shardId, PhantomQuerySampler sampler) {
@@ -161,8 +182,11 @@ public class PhantomQuerySamplers implements IndexEventListener, ClusterStateLis
         if (removed.isEmpty() == false) {
             logger.debug(() -> format("%s the lease of a sampler expired before the sample was collected", shardId));
         }
-        // the lease has fired already, so unlike discard(List) there is no lease to cancel
-        removed.forEach(entry -> entry.sampler().discard());
+        // the lease has fired already, so unlike discard(List, SamplerEnd) there is no lease to cancel
+        for (Entry entry : removed) {
+            entry.sampler().discard();
+            metrics.recordSamplerEnded(SamplerEnd.LEASE_EXPIRED);
+        }
     }
 
     // the caller has to discard or collect the entries that this removes
@@ -182,10 +206,11 @@ public class PhantomQuerySamplers implements IndexEventListener, ClusterStateLis
         return removed;
     }
 
-    private static void discard(List<Entry> entries) {
+    private void discard(List<Entry> entries, SamplerEnd end) {
         for (Entry entry : entries) {
             entry.lease().cancel();
             entry.sampler().discard();
+            metrics.recordSamplerEnded(end);
         }
     }
 
@@ -194,12 +219,32 @@ public class PhantomQuerySamplers implements IndexEventListener, ClusterStateLis
         return routing != null && routing.initializing();
     }
 
+    /**
+     * Why the copy is not an initializing replica of the shard, as the outcome that a request to sample for it gets, or {@code null} when
+     * it is. A copy that the cluster state does not contain is told from one that it contains, but that cannot be sampled for: the first
+     * is what a node that lags behind the requester looks like.
+     */
+    @Nullable
+    static SamplingStartOutcome whyNotInitializingReplica(ClusterState state, ShardId shardId, String allocationId) {
+        final ShardRouting routing = findShard(state, shardId, allocationId);
+        if (routing == null) {
+            return SamplingStartOutcome.DECLINED_TARGET_UNKNOWN;
+        }
+        return routing.primary() == false && routing.initializing() ? null : SamplingStartOutcome.DECLINED_TARGET_NOT_INITIALIZING;
+    }
+
     // never the primary: in stateless it is on an indexing node, and only replicas are search copies
     @Nullable
     static ShardRouting findReplica(ClusterState state, ShardId shardId, String allocationId) {
-        final IndexShardRoutingTable shardRoutingTable = findShardRoutingTable(state, shardId);
-        final ShardRouting routing = shardRoutingTable == null ? null : shardRoutingTable.getByAllocationId(allocationId);
+        final ShardRouting routing = findShard(state, shardId, allocationId);
         return routing == null || routing.primary() ? null : routing;
+    }
+
+    // the copy of the shard with this allocation id, primary or not, or null when the cluster state has none
+    @Nullable
+    static ShardRouting findShard(ClusterState state, ShardId shardId, String allocationId) {
+        final IndexShardRoutingTable shardRoutingTable = findShardRoutingTable(state, shardId);
+        return shardRoutingTable == null ? null : shardRoutingTable.getByAllocationId(allocationId);
     }
 
     @Nullable

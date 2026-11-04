@@ -27,6 +27,8 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -46,6 +48,7 @@ import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.sameInstance;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
@@ -448,5 +451,169 @@ public class PhantomQuerySamplerTests extends ESTestCase {
         assertThat("whatever was retained before the collection is in the sample", collected.get(), equalTo(offered.get()));
         assertThat("nothing is left in the budget", budget.usedInBytes(), equalTo(0L));
         assertThat(sampler.retainedCount(), equalTo(0));
+    }
+
+    // ---- drops
+
+    private Map<String, Long> dropped() {
+        return PhantomQueryTestUtils.counterBy(
+            meterRegistry,
+            PhantomQueryMetrics.DROPPED_COUNTER,
+            PhantomQueryMetrics.DROP_REASON_ATTRIBUTE
+        );
+    }
+
+    public void testNothingIsDroppedWhileEveryRequestIsRetained() {
+        final var sampler = newSampler(100, Long.MAX_VALUE);
+
+        for (int i = 0; i < 10; i++) {
+            assertThat(offer(sampler, request(i)), is(true));
+        }
+
+        assertThat(dropped(), equalTo(Map.of()));
+    }
+
+    public void testEachRequestThatAFullNodeBudgetDropsIsCountedAndTheSamplerStaysOpen() {
+        final long size = sizeOf(request(0));
+        nodeLimitInBytes.set(size);
+        final var first = newSampler(100, Long.MAX_VALUE);
+        final var second = newSampler(100, Long.MAX_VALUE);
+        assertThat(offer(first, request(0)), is(true));
+
+        final int drops = randomIntBetween(2, 6);
+        for (int i = 0; i < drops; i++) {
+            assertThat(offer(second, request(i + 1)), is(false));
+        }
+
+        assertThat(
+            "every request is counted, because the sampler is still accepting them",
+            dropped(),
+            equalTo(Map.of("NODE_BUDGET", (long) drops))
+        );
+        assertThat(second.accepting(), is(true));
+
+        first.discard();
+        assertThat("once there is room again requests are retained and not dropped", offer(second, request(0)), is(true));
+        assertThat(dropped(), equalTo(Map.of("NODE_BUDGET", (long) drops)));
+    }
+
+    public void testTheByteLimitOfTheSampleDropsOneRequestAndLaterRequestsAreNotCounted() {
+        final long size = sizeOf(request(0));
+        final var sampler = newSampler(100, 2 * size);
+        assertThat(offer(sampler, request(0)), is(true));
+        assertThat(offer(sampler, request(1)), is(true));
+
+        assertThat("it would exceed the limit", offer(sampler, request(2)), is(false));
+        assertThat(sampler.accepting(), is(false));
+        for (int i = 3; i < 10; i++) {
+            assertThat("a sampler that stopped accepting costs a flag check and no metric", offer(sampler, request(i)), is(false));
+        }
+
+        assertThat(dropped(), equalTo(Map.of("SAMPLE_BYTES", 1L)));
+    }
+
+    public void testARequestThatIsBiggerThanTheByteLimitIsADropAndStopsTheSampler() {
+        final var sampler = newSampler(100, sizeOf(request(0)) - 1);
+
+        assertThat(offer(sampler, request(0)), is(false));
+        assertThat(offer(sampler, request(1)), is(false));
+
+        assertThat(sampler.accepting(), is(false));
+        assertThat(dropped(), equalTo(Map.of("SAMPLE_BYTES", 1L)));
+    }
+
+    public void testReachingTheCountLimitIsNotADrop() {
+        final int limit = randomIntBetween(1, 5);
+        final var sampler = newSampler(limit, Long.MAX_VALUE);
+
+        for (int i = 0; i < limit + randomIntBetween(1, 5); i++) {
+            offer(sampler, request(i));
+        }
+
+        assertThat(sampler.retainedCount(), equalTo(limit));
+        assertThat(dropped(), equalTo(Map.of()));
+    }
+
+    public void testSamplersThatCannotAcceptAnythingCountNoDrops() {
+        final var zeroQueries = newSampler(0, Long.MAX_VALUE);
+        final var zeroBytes = newSampler(10, 0);
+        final var collected = newSampler(10, Long.MAX_VALUE);
+        final var discarded = newSampler(10, Long.MAX_VALUE);
+        collected.collect();
+        discarded.discard();
+
+        for (PhantomQuerySampler sampler : List.of(zeroQueries, zeroBytes, collected, discarded)) {
+            assertThat(offer(sampler, request(0)), is(false));
+        }
+
+        assertThat(dropped(), equalTo(Map.of()));
+    }
+
+    public void testIneligibleRequestsAreNotDrops() {
+        final var sampler = newSampler(10, Long.MAX_VALUE);
+
+        for (ShardSearchRequest request : List.of(
+            scrollRequest(shardId, "scroll"),
+            readerRequest(shardId, "point-in-time"),
+            waitForCheckpointRequest(shardId, "wait-for-checkpoint"),
+            dfsRequest(shardId, "dfs")
+        )) {
+            assertThat(offer(sampler, request), is(false));
+        }
+
+        assertThat(dropped(), equalTo(Map.of()));
+    }
+
+    public void testARequestThatCannotBeSerializedIsADropForEachSamplerThatSawItAndTheSamplersStayOpen() throws IOException {
+        final var request = spy(request(0));
+        doThrow(new IOException("simulated")).when(request).writeTo(any(StreamOutput.class));
+        final var observed = new ObservedQueryRequest(request);
+        final var first = newSampler(100, Long.MAX_VALUE);
+        final var second = newSampler(100, Long.MAX_VALUE);
+
+        assertThat(first.offer(observed), is(false));
+        assertThat(second.offer(observed), is(false));
+
+        assertThat(dropped(), equalTo(Map.of("ENCODING_FAILED", 2L)));
+        assertThat(first.accepting(), is(true));
+        assertThat(second.accepting(), is(true));
+        assertThat(budget.usedInBytes(), equalTo(0L));
+        assertThat("a request that can be serialized is still retained", offer(first, request(1)), is(true));
+        assertThat(dropped(), equalTo(Map.of("ENCODING_FAILED", 2L)));
+    }
+
+    public void testDropsAreRecordedWithoutAttributesOtherThanTheReason() {
+        final long size = sizeOf(request(0));
+        nodeLimitInBytes.set(0);
+        final var sampler = newSampler(100, size - 1);
+
+        assertThat(offer(newSampler(100, Long.MAX_VALUE), request(0)), is(false));
+        assertThat(offer(sampler, request(0)), is(false));
+
+        for (Measurement measurement : meterRegistry.getRecorder()
+            .getMeasurements(InstrumentType.LONG_COUNTER, PhantomQueryMetrics.DROPPED_COUNTER)) {
+            assertThat(measurement.getLong(), equalTo(1L));
+            assertThat(measurement.attributes().keySet(), equalTo(Set.of(PhantomQueryMetrics.DROP_REASON_ATTRIBUTE)));
+        }
+        assertThat(dropped(), equalTo(Map.of("NODE_BUDGET", 1L, "SAMPLE_BYTES", 1L)));
+    }
+
+    public void testConcurrentOffersCountEveryDropOnceTheNodeBudgetIsFull() {
+        final long size = sizeOf(request(0));
+        nodeLimitInBytes.set(size);
+        final var holder = newSampler(100, Long.MAX_VALUE);
+        assertThat(offer(holder, request(0)), is(true));
+        final int threads = randomIntBetween(2, 8);
+        final int requestsPerThread = 25;
+        final var sampler = newSampler(1000, Long.MAX_VALUE);
+
+        runInParallel(threads, thread -> {
+            for (int i = 0; i < requestsPerThread; i++) {
+                offer(sampler, request(thread * requestsPerThread + i));
+            }
+        });
+
+        assertThat(sampler.retainedCount(), equalTo(0));
+        assertThat(dropped(), equalTo(Map.of("NODE_BUDGET", (long) threads * requestsPerThread)));
     }
 }

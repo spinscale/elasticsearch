@@ -38,9 +38,11 @@ import org.elasticsearch.tasks.TaskManager;
 import org.elasticsearch.threadpool.Scheduler;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.xpack.stateless.cache.SearchRecoveryWarmingWindows;
+import org.elasticsearch.xpack.stateless.lucene.SearchDirectory;
 import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryMetrics.QueryOutcome;
 import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryMetrics.RecoveryType;
 import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryMetrics.ReplayOutcome;
+import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryMetrics.ShardSizeBucket;
 
 import java.util.List;
 import java.util.Map;
@@ -50,6 +52,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
+import java.util.function.ToLongFunction;
 
 import static org.elasticsearch.core.Strings.format;
 
@@ -87,6 +90,10 @@ public class PhantomQueryReplayer {
     private static final Logger logger = LogManager.getLogger(PhantomQueryReplayer.class);
 
     static final String TASK_TYPE = "direct";
+
+    // the start time of a query that failed before it began to execute; not -1, because the raw clock may be negative
+    private static final long NOT_STARTED = Long.MIN_VALUE;
+
     /** What the task management API lists the phantom queries under, as children of the recovery action. */
     public static final String TASK_ACTION = StatelessUnpromotableRelocationAction.TYPE.name() + "/phantom_query";
 
@@ -124,6 +131,7 @@ public class PhantomQueryReplayer {
     private final PhantomQueryMetrics metrics;
     private final NamedWriteableRegistry namedWriteableRegistry;
     private final QueryExecution queryExecution;
+    private final ToLongFunction<IndexShard> dataSetSizeInBytes;
     private volatile Throttle throttle;
 
     public PhantomQueryReplayer(
@@ -135,7 +143,16 @@ public class PhantomQueryReplayer {
         PhantomQueryMetrics metrics,
         NamedWriteableRegistry namedWriteableRegistry
     ) {
-        this(threadPool, taskManager, settings, warmingWindows, metrics, namedWriteableRegistry, executeWith(searchService));
+        this(
+            threadPool,
+            taskManager,
+            settings,
+            warmingWindows,
+            metrics,
+            namedWriteableRegistry,
+            executeWith(searchService),
+            PhantomQueryReplayer::dataSetSizeInBytes
+        );
     }
 
     PhantomQueryReplayer(
@@ -145,7 +162,8 @@ public class PhantomQueryReplayer {
         SearchRecoveryWarmingWindows warmingWindows,
         PhantomQueryMetrics metrics,
         NamedWriteableRegistry namedWriteableRegistry,
-        QueryExecution queryExecution
+        QueryExecution queryExecution,
+        ToLongFunction<IndexShard> dataSetSizeInBytes
     ) {
         this.threadPool = threadPool;
         this.taskManager = taskManager;
@@ -154,6 +172,12 @@ public class PhantomQueryReplayer {
         this.metrics = metrics;
         this.namedWriteableRegistry = namedWriteableRegistry;
         this.queryExecution = queryExecution;
+        this.dataSetSizeInBytes = dataSetSizeInBytes;
+    }
+
+    // what the search directory estimates, which is the size of the commit that the copy recovered
+    private static long dataSetSizeInBytes(IndexShard shard) {
+        return SearchDirectory.unwrapDirectory(shard.store().directory()).estimateDataSetSizeInBytes();
     }
 
     private static QueryExecution executeWith(SearchService searchService) {
@@ -189,20 +213,22 @@ public class PhantomQueryReplayer {
         // The raw clock, because the cached one only moves every 200ms by default, which is more than a replay may take. For the time that
         // is left it can only be ahead of the cached clock that the window was recorded with, so a replay never outlasts its window.
         final long startMillis = threadPool.rawRelativeTimeInMillis();
-        final RecoveryType recoveryType = recoveringCopy.relocatingNodeId() != null ? RecoveryType.RELOCATION : RecoveryType.NEW_COPY;
+        final RecoveryType recoveryType = RecoveryType.of(recoveringCopy);
         final ShardId shardId = recoveringCopy.shardId();
         final String allocationId = recoveringCopy.allocationId().getId();
+        // for every outcome, because skipped replays by shard size are what it is for
+        final ShardSizeBucket shardSize = shardSizeBucket(shard);
         try {
             final OptionalLong deadlineMillis = warmingWindows.relativeDeadlineMillis(shardId, allocationId);
             final long remainingMillis = deadlineMillis.isPresent() ? deadlineMillis.getAsLong() - startMillis : 0L;
             final ReplayOutcome skipped = reasonToSkip(deadlineMillis, remainingMillis, sample);
             if (skipped != null) {
                 logger.debug("{} not replaying a sample for the copy [{}]: {}", shardId, allocationId, skipped);
-                metrics.recordReplay(skipped, recoveryType, threadPool.rawRelativeTimeInMillis() - startMillis);
+                metrics.recordReplay(skipped, recoveryType, shardSize, threadPool.rawRelativeTimeInMillis() - startMillis);
                 listener.onResponse(null);
                 return;
             }
-            new Replay(parentTask, shard, shardId, allocationId, recoveryType, sample.requests(), startMillis, listener).start(
+            new Replay(parentTask, shard, shardId, allocationId, recoveryType, shardSize, sample.requests(), startMillis, listener).start(
                 TimeValue.timeValueMillis(remainingMillis)
             );
         } catch (Exception e) {
@@ -230,6 +256,18 @@ public class PhantomQueryReplayer {
             return ReplayOutcome.NO_SAMPLE;
         }
         return null;
+    }
+
+    /**
+     * Never fails: a size that cannot be read is a replay recorded without one.
+     */
+    private ShardSizeBucket shardSizeBucket(IndexShard shard) {
+        try {
+            return ShardSizeBucket.of(dataSetSizeInBytes.applyAsLong(shard));
+        } catch (Exception e) {
+            logger.debug(() -> format("%s failed to read the data set size of a copy for the metrics of a replay", shard.shardId()), e);
+            return ShardSizeBucket.UNKNOWN;
+        }
     }
 
     private ThrottledTaskRunner runnerForNewReplay() {
@@ -260,6 +298,7 @@ public class PhantomQueryReplayer {
         private final ShardId shardId;
         private final String allocationId;
         private final RecoveryType recoveryType;
+        private final ShardSizeBucket shardSize;
         private final List<EncodedQueryRequest> requests;
         private final long startMillis;
         private final ActionListener<Void> listener;
@@ -275,6 +314,7 @@ public class PhantomQueryReplayer {
             ShardId shardId,
             String allocationId,
             RecoveryType recoveryType,
+            ShardSizeBucket shardSize,
             List<EncodedQueryRequest> requests,
             long startMillis,
             ActionListener<Void> recoveryListener
@@ -284,6 +324,7 @@ public class PhantomQueryReplayer {
             this.shardId = shardId;
             this.allocationId = allocationId;
             this.recoveryType = recoveryType;
+            this.shardSize = shardSize;
             this.requests = requests;
             this.startMillis = startMillis;
             this.unfinishedQueries = new AtomicInteger(requests.size());
@@ -339,9 +380,14 @@ public class PhantomQueryReplayer {
         }
 
         private void runQueryInSystemContext(EncodedQueryRequest encoded, Releasable slot) {
-            if (end.get() != null) {
+            final End ended = end.get();
+            if (ended != null) {
                 // The replay ended while this query waited for its turn, which is why the queries are not decoded before.
                 slot.close();
+                // only the deadline and a circuit breaker leave queries that never started, with a replay that is not abandoned
+                if (ended == End.DEADLINE || ended == End.BREAKER) {
+                    metrics.recordNotExecuted(ended.outcome);
+                }
                 queryDone();
                 return;
             }
@@ -359,7 +405,8 @@ public class PhantomQueryReplayer {
                 task = registerChildTask();
             } catch (Exception e) {
                 slot.close();
-                queryExecuted(e);
+                // it never started executing, so it has no duration
+                queryExecuted(e, NOT_STARTED);
                 return;
             }
             runningQueries.add(task);
@@ -367,10 +414,11 @@ public class PhantomQueryReplayer {
                 // the replay ended after the check above, so it did not see this task when it cancelled the running ones
                 cancel(task, "the replay of phantom queries has ended");
             }
+            final long executionStartMillis = threadPool.rawRelativeTimeInMillis();
             final var completed = new AtomicBoolean();
             final ActionListener<Void> done = ActionListener.wrap(
-                ignored -> complete(task, slot, completed, null),
-                e -> complete(task, slot, completed, e)
+                ignored -> complete(task, slot, completed, null, executionStartMillis),
+                e -> complete(task, slot, completed, e, executionStartMillis)
             );
             try {
                 queryExecution.execute(shard, request, task, done);
@@ -379,7 +427,13 @@ public class PhantomQueryReplayer {
             }
         }
 
-        private void complete(CancellableTask task, Releasable slot, AtomicBoolean completed, Exception failure) {
+        private void complete(
+            CancellableTask task,
+            Releasable slot,
+            AtomicBoolean completed,
+            Exception failure,
+            long executionStartMillis
+        ) {
             if (completed.compareAndSet(false, true) == false) {
                 return;
             }
@@ -387,10 +441,10 @@ public class PhantomQueryReplayer {
             runningQueries.remove(task);
             taskManager.unregister(task);
             slot.close();
-            queryExecuted(failure);
+            queryExecuted(failure, executionStartMillis);
         }
 
-        private void queryExecuted(Exception failure) {
+        private void queryExecuted(Exception failure, long executionStartMillis) {
             final QueryOutcome outcome;
             boolean trippedBreaker = false;
             if (failure == null) {
@@ -404,6 +458,9 @@ public class PhantomQueryReplayer {
                 logger.debug("{} a phantom query failed with [{}]", shardId, failure.getClass().getSimpleName());
             }
             metrics.recordExecuted(outcome);
+            if (executionStartMillis != NOT_STARTED) {
+                metrics.recordExecutionDuration(outcome, threadPool.rawRelativeTimeInMillis() - executionStartMillis);
+            }
             if (trippedBreaker) {
                 end(End.BREAKER);
             } else {
@@ -433,7 +490,7 @@ public class PhantomQueryReplayer {
                 runningQueries.forEach(task -> cancel(task, cancellationReason));
             }
             if (reason.outcome != null) {
-                metrics.recordReplay(reason.outcome, recoveryType, threadPool.rawRelativeTimeInMillis() - startMillis);
+                metrics.recordReplay(reason.outcome, recoveryType, shardSize, threadPool.rawRelativeTimeInMillis() - startMillis);
             }
             logger.debug("{} replayed a sample of [{}] queries for the copy [{}]: {}", shardId, requests.size(), allocationId, reason);
             listener.onResponse(null);

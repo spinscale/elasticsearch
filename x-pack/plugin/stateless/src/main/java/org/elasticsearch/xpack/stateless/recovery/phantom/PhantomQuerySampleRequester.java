@@ -23,6 +23,8 @@ import org.elasticsearch.transport.NodeNotConnectedException;
 import org.elasticsearch.transport.TransportRequestOptions;
 import org.elasticsearch.transport.TransportService;
 import org.elasticsearch.xpack.stateless.cache.SearchRecoveryWarmingWindows;
+import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryMetrics.CollectionOutcome;
+import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryMetrics.RecoveryType;
 import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQuerySamplingActions.CollectSampleRequest;
 import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQuerySamplingActions.CollectSampleResponse;
 import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQuerySamplingActions.StartSamplingRequest;
@@ -49,6 +51,7 @@ public class PhantomQuerySampleRequester {
     private final ClusterService clusterService;
     private final PhantomQueriesSettings settings;
     private final SearchRecoveryWarmingWindows warmingWindows;
+    private final PhantomQueryMetrics metrics;
     private final Executor responseExecutor;
     private final TimeValue requestTimeout;
     private final LongSupplier relativeTimeInMillis;
@@ -59,6 +62,7 @@ public class PhantomQuerySampleRequester {
         ClusterService clusterService,
         PhantomQueriesSettings settings,
         SearchRecoveryWarmingWindows warmingWindows,
+        PhantomQueryMetrics metrics,
         Executor responseExecutor,
         TimeValue requestTimeout
     ) {
@@ -67,6 +71,7 @@ public class PhantomQuerySampleRequester {
             clusterService,
             settings,
             warmingWindows,
+            metrics,
             responseExecutor,
             requestTimeout,
             // The raw clock, as the replay uses, because the cached one only moves every 200ms by default: a window that is over could
@@ -81,6 +86,7 @@ public class PhantomQuerySampleRequester {
         ClusterService clusterService,
         PhantomQueriesSettings settings,
         SearchRecoveryWarmingWindows warmingWindows,
+        PhantomQueryMetrics metrics,
         Executor responseExecutor,
         TimeValue requestTimeout,
         LongSupplier relativeTimeInMillis,
@@ -90,6 +96,7 @@ public class PhantomQuerySampleRequester {
         this.clusterService = clusterService;
         this.settings = settings;
         this.warmingWindows = warmingWindows;
+        this.metrics = metrics;
         this.responseExecutor = responseExecutor;
         this.requestTimeout = requestTimeout;
         this.relativeTimeInMillis = relativeTimeInMillis;
@@ -97,8 +104,10 @@ public class PhantomQuerySampleRequester {
     }
 
     public Sampling startSampling(Task parentTask, ShardRouting recoveringCopy) {
+        final RecoveryType recoveryType = RecoveryType.of(recoveringCopy);
         try {
             if (settings.enabled() == false) {
+                // nothing is recorded: the replay records that phantom queries were disabled
                 return Sampling.NONE;
             }
             final ShardId shardId = recoveringCopy.shardId();
@@ -112,6 +121,7 @@ public class PhantomQuerySampleRequester {
             ).orElse(null);
             if (peer == null) {
                 logger.debug("{} there is no peer to sample for the copy [{}]", shardId, allocationId);
+                metrics.recordSampleCollection(CollectionOutcome.NO_PEER, recoveryType);
                 return Sampling.NONE;
             }
             final ActionListener<StartSamplingResponse> logOutcome = ActionListener.wrap(
@@ -135,9 +145,10 @@ public class PhantomQuerySampleRequester {
                 TransportRequestOptions.timeout(requestTimeout),
                 new ActionListenerResponseHandler<>(logOutcome, StartSamplingResponse::new, responseExecutor)
             );
-            return new Sampling(this, shardId, allocationId, peer);
+            return new Sampling(this, shardId, allocationId, peer, recoveryType);
         } catch (Exception e) {
             logger.debug(() -> format("%s failed to ask a peer to sample for the copy", recoveringCopy.shardId()), e);
+            metrics.recordSampleCollection(CollectionOutcome.FAILED, recoveryType);
             return Sampling.NONE;
         }
     }
@@ -152,7 +163,7 @@ public class PhantomQuerySampleRequester {
 
     public static final class Sampling {
 
-        static final Sampling NONE = new Sampling(null, null, null, null);
+        static final Sampling NONE = new Sampling(null, null, null, null, null);
 
         @Nullable
         private final PhantomQuerySampleRequester requester;
@@ -160,19 +171,25 @@ public class PhantomQuerySampleRequester {
         private final String allocationId;
         @Nullable
         private final DiscoveryNode peer;
+        private final RecoveryType recoveryType;
 
         private Sampling(
             @Nullable PhantomQuerySampleRequester requester,
             ShardId shardId,
             String allocationId,
-            @Nullable DiscoveryNode peer
+            @Nullable DiscoveryNode peer,
+            RecoveryType recoveryType
         ) {
             this.requester = requester;
             this.shardId = shardId;
             this.allocationId = allocationId;
             this.peer = peer;
+            this.recoveryType = recoveryType;
         }
 
+        /**
+         * Records how the sample was obtained, unless there was no sampling to begin with: the requester recorded why not.
+         */
         public void collectSample(Task parentTask, ActionListener<PhantomQuerySample> listener) {
             if (peer == null) {
                 listener.onResponse(PhantomQuerySample.EMPTY);
@@ -182,6 +199,7 @@ public class PhantomQuerySampleRequester {
                 final String reasonToSkip = requester.reasonToSkipCollecting(shardId, allocationId);
                 if (reasonToSkip != null) {
                     logger.debug("{} not collecting the sample for the copy [{}]: {}", shardId, allocationId, reasonToSkip);
+                    requester.metrics.recordSampleCollection(CollectionOutcome.SKIPPED, recoveryType);
                     listener.onResponse(PhantomQuerySample.EMPTY);
                     return;
                 }
@@ -190,6 +208,7 @@ public class PhantomQuerySampleRequester {
                         () -> format("%s failed to collect the sample of the copy [%s] from [%s]", shardId, allocationId, peer.getName()),
                         e
                     );
+                    requester.metrics.recordSampleCollection(CollectionOutcome.FAILED, recoveryType);
                     l.onResponse(PhantomQuerySample.EMPTY);
                 });
                 requester.transportService.sendChildRequest(
@@ -206,7 +225,12 @@ public class PhantomQuerySampleRequester {
                             allocationId,
                             peer.getName()
                         );
-                        return response.sample();
+                        final PhantomQuerySample sample = response.sample();
+                        requester.metrics.recordSampleCollection(
+                            sample.isEmpty() ? CollectionOutcome.EMPTY : CollectionOutcome.COLLECTED,
+                            recoveryType
+                        );
+                        return sample;
                     }), CollectSampleResponse::new, requester.responseExecutor)
                 );
             } catch (Exception e) {
@@ -214,6 +238,7 @@ public class PhantomQuerySampleRequester {
                     () -> format("%s failed to ask [%s] for the sample of the copy [%s]", shardId, peer.getName(), allocationId),
                     e
                 );
+                requester.metrics.recordSampleCollection(CollectionOutcome.FAILED, recoveryType);
                 listener.onResponse(PhantomQuerySample.EMPTY);
             }
         }

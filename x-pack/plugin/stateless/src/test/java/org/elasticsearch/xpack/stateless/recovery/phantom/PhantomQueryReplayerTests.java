@@ -47,16 +47,20 @@ import org.junit.Before;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.stream.IntStream;
 
 import static org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryTestUtils.clusterStateWithInitializingSearchReplica;
 import static org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryTestUtils.clusterStateWithRelocatingSearchReplica;
+import static org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryTestUtils.counterBy;
+import static org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryTestUtils.counterTotal;
 import static org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryTestUtils.encode;
 import static org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryTestUtils.queryRequest;
 import static org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryTestUtils.shards;
@@ -79,6 +83,7 @@ public class PhantomQueryReplayerTests extends ESTestCase {
 
     private static final String SECRET = "a-value-that-must-never-be-logged";
     private static final long WINDOW_MILLIS = 10_000L;
+    private static final long GIB = 1024L * 1024L * 1024L;
 
     private final ShardId shardId = PhantomQueryTestUtils.shardId();
     private DeterministicTaskQueue taskQueue;
@@ -89,6 +94,7 @@ public class PhantomQueryReplayerTests extends ESTestCase {
     private RecordingMeterRegistry meterRegistry;
     private IndexShard shard;
     private FakeQueryExecution execution;
+    private final AtomicLong dataSetSizeInBytes = new AtomicLong(5 * GIB);
     private PhantomQueryReplayer replayer;
     private Task recoveryTask;
     private ShardRouting newCopy;
@@ -111,7 +117,8 @@ public class PhantomQueryReplayerTests extends ESTestCase {
             windows,
             new PhantomQueryMetrics(meterRegistry),
             PhantomQueryTestUtils.namedWriteableRegistry(),
-            execution
+            execution,
+            replayedShard -> dataSetSizeInBytes.get()
         );
         recoveryTask = new Task(randomNonNegativeLong(), "transport", "recovery", "", TaskId.EMPTY_TASK_ID, Map.of());
         newCopy = shards(clusterStateWithInitializingSearchReplica()).stream().filter(ShardRouting::initializing).findFirst().orElseThrow();
@@ -352,7 +359,8 @@ public class PhantomQueryReplayerTests extends ESTestCase {
             windows,
             new PhantomQueryMetrics(new RecordingMeterRegistry()),
             PhantomQueryTestUtils.namedWriteableRegistry(),
-            execution
+            execution,
+            replayedShard -> dataSetSizeInBytes.get()
         );
 
         final var done = new PlainActionFuture<Void>();
@@ -701,6 +709,391 @@ public class PhantomQueryReplayerTests extends ESTestCase {
         assertThat("the other query that runs is cancelled", execution.started.get(1).task().isCancelled(), is(true));
         assertThat("the third never starts", execution.started, hasSize(2));
         assertThat(replays(), empty());
+    }
+
+    // ---- shard size
+
+    private String shardSizeOf(Measurement replay) {
+        return (String) replay.attributes().get(PhantomQueryMetrics.SHARD_SIZE_BUCKET_ATTRIBUTE);
+    }
+
+    public void testReplayIsRecordedWithTheBucketOfTheShardSize() {
+        dataSetSizeInBytes.set(5 * GIB);
+        startWindow(newCopy, WINDOW_MILLIS);
+        execution.reaction = Started::succeed;
+
+        replay(newCopy, sample(1));
+        runUntilIdle();
+
+        assertOnlyReplayOutcome(ReplayOutcome.COMPLETED, RecoveryType.NEW_COPY);
+        assertThat(shardSizeOf(onlyReplay()), equalTo("<=10GiB"));
+        assertThat(
+            onlyReplay().attributes().keySet(),
+            equalTo(
+                Set.of(
+                    PhantomQueryMetrics.REPLAY_OUTCOME_ATTRIBUTE,
+                    PhantomQueryMetrics.RECOVERY_TYPE_ATTRIBUTE,
+                    PhantomQueryMetrics.SHARD_SIZE_BUCKET_ATTRIBUTE
+                )
+            )
+        );
+    }
+
+    public void testEveryBucketOfTheShardSizeIsRecorded() {
+        final Map<Long, String> expected = new LinkedHashMap<>();
+        expected.put(1L, "<=1GiB");
+        expected.put(GIB, "<=1GiB");
+        expected.put(GIB + 1, "<=10GiB");
+        expected.put(10 * GIB, "<=10GiB");
+        expected.put(10 * GIB + 1, "<=50GiB");
+        expected.put(50 * GIB, "<=50GiB");
+        expected.put(50 * GIB + 1, ">50GiB");
+        execution.reaction = Started::succeed;
+
+        for (long size : expected.keySet()) {
+            dataSetSizeInBytes.set(size);
+            startWindow(newCopy, WINDOW_MILLIS);
+            replay(newCopy, sample(1));
+            runUntilIdle();
+        }
+
+        assertThat(replays().stream().map(this::shardSizeOf).toList(), equalTo(List.copyOf(expected.values())));
+    }
+
+    public void testSkippedReplaysAreRecordedWithTheShardSizeToo() {
+        dataSetSizeInBytes.set(60 * GIB);
+
+        // no window
+        replay(newCopy, sample(1));
+        // a window that is used up
+        startWindow(newCopy, -1);
+        replay(newCopy, sample(1));
+        // no sample
+        startWindow(newCopy, WINDOW_MILLIS);
+        replay(newCopy, PhantomQuerySample.EMPTY);
+        // disabled
+        disablePhantomQueries();
+        replay(newCopy, sample(1));
+
+        assertThat(
+            replays().stream().map(replay -> replay.attributes().get(PhantomQueryMetrics.REPLAY_OUTCOME_ATTRIBUTE)).toList(),
+            equalTo(List.of("NO_WINDOW", "NO_TIME_LEFT", "NO_SAMPLE", "DISABLED"))
+        );
+        assertThat(replays().stream().map(this::shardSizeOf).toList(), equalTo(List.of(">50GiB", ">50GiB", ">50GiB", ">50GiB")));
+    }
+
+    public void testASizeThatCannotBeReadIsUnknownAndTheReplayGoesOn() {
+        final var registry = new RecordingMeterRegistry();
+        final var unreadable = new PhantomQueryReplayer(
+            threadPool,
+            taskManager,
+            new PhantomQueriesSettings(clusterSettings),
+            windows,
+            new PhantomQueryMetrics(registry),
+            PhantomQueryTestUtils.namedWriteableRegistry(),
+            execution,
+            replayedShard -> {
+                throw new IllegalStateException("simulated: the store is closing");
+            }
+        );
+        startWindow(newCopy, WINDOW_MILLIS);
+        execution.reaction = Started::succeed;
+        final var done = new PlainActionFuture<Void>();
+
+        unreadable.replay(recoveryTask, shard, newCopy, sample(2), done);
+        runUntilIdle();
+
+        assertThat(safeGet(done), nullValue());
+        assertThat("the queries ran", execution.started, hasSize(2));
+        final List<Measurement> replays = registry.getRecorder()
+            .getMeasurements(InstrumentType.DOUBLE_HISTOGRAM, PhantomQueryMetrics.REPLAY_DURATION_HISTOGRAM);
+        assertThat(replays, hasSize(1));
+        assertThat(replays.get(0).attributes().get(PhantomQueryMetrics.REPLAY_OUTCOME_ATTRIBUTE), equalTo("COMPLETED"));
+        assertThat(shardSizeOf(replays.get(0)), equalTo("UNKNOWN"));
+    }
+
+    public void testASizeOfZeroIsUnknown() {
+        dataSetSizeInBytes.set(0);
+        startWindow(newCopy, WINDOW_MILLIS);
+
+        replay(newCopy, PhantomQuerySample.EMPTY);
+
+        assertThat(shardSizeOf(onlyReplay()), equalTo("UNKNOWN"));
+    }
+
+    public void testTheSizeIsTheOneWhenTheReplayStarted() {
+        dataSetSizeInBytes.set(5 * GIB);
+        startWindow(newCopy, WINDOW_MILLIS);
+        final var done = replay(newCopy, sample(1));
+        runUntilIdle();
+
+        dataSetSizeInBytes.set(60 * GIB);
+        execution.started.get(0).succeed();
+        runUntilIdle();
+
+        assertThat(done.isDone(), is(true));
+        assertThat(shardSizeOf(onlyReplay()), equalTo("<=10GiB"));
+    }
+
+    public void testEveryOutcomeOfAReplayCarriesTheShardSize() {
+        dataSetSizeInBytes.set(20 * GIB);
+        setMaxConcurrent(1);
+
+        // the deadline
+        startWindow(newCopy, 1_000);
+        replay(newCopy, sample(2));
+        runUntilIdle();
+        advanceTime(1_000);
+        execution.started.get(0).fail(new TaskCancelledException("cancelled"));
+        runUntilIdle();
+        // a circuit breaker
+        startWindow(relocationTarget, WINDOW_MILLIS);
+        execution.reaction = query -> query.fail(new CircuitBreakingException("too much", CircuitBreaker.Durability.TRANSIENT));
+        replay(relocationTarget, sample(2));
+        runUntilIdle();
+
+        assertThat(
+            replays().stream().map(replay -> replay.attributes().get(PhantomQueryMetrics.REPLAY_OUTCOME_ATTRIBUTE)).toList(),
+            containsInAnyOrder("DEADLINE", "BREAKER")
+        );
+        for (Measurement replay : replays()) {
+            assertThat(shardSizeOf(replay), equalTo("<=50GiB"));
+        }
+    }
+
+    // ---- the duration of each query
+
+    private List<Measurement> executionDurations() {
+        return meterRegistry.getRecorder()
+            .getMeasurements(InstrumentType.DOUBLE_HISTOGRAM, PhantomQueryMetrics.EXECUTION_DURATION_HISTOGRAM);
+    }
+
+    public void testEachQueryThatStartedRecordsItsDurationInSecondsWithItsOutcome() {
+        setMaxConcurrent(3);
+        startWindow(newCopy, WINDOW_MILLIS);
+        replay(newCopy, sample(3));
+        runUntilIdle();
+        assertThat("all three start at the same time", execution.started, hasSize(3));
+        assertThat("nothing is recorded while they run", executionDurations(), empty());
+
+        advanceTime(100);
+        execution.started.get(0).succeed();
+        advanceTime(400);
+        execution.started.get(1).fail(new IllegalArgumentException("the query needs remote work to be rewritten"));
+        advanceTime(500);
+        execution.started.get(2).fail(new TaskCancelledException("cancelled"));
+        runUntilIdle();
+
+        assertThat(executionDurations(), hasSize(3));
+        assertThat(executionDurations().get(0).getDouble(), closeTo(0.1, 1e-9));
+        assertThat(executionDurations().get(0).attributes(), equalTo(Map.of(PhantomQueryMetrics.QUERY_OUTCOME_ATTRIBUTE, "SUCCESS")));
+        assertThat(executionDurations().get(1).getDouble(), closeTo(0.5, 1e-9));
+        assertThat(executionDurations().get(1).attributes(), equalTo(Map.of(PhantomQueryMetrics.QUERY_OUTCOME_ATTRIBUTE, "FAILURE")));
+        assertThat(executionDurations().get(2).getDouble(), closeTo(1.0, 1e-9));
+        assertThat(executionDurations().get(2).attributes(), equalTo(Map.of(PhantomQueryMetrics.QUERY_OUTCOME_ATTRIBUTE, "CANCELLED")));
+    }
+
+    public void testTheDurationOfAQueryDoesNotIncludeTheTimeItWaitedForItsTurn() {
+        setMaxConcurrent(1);
+        startWindow(newCopy, WINDOW_MILLIS);
+        replay(newCopy, sample(2));
+        runUntilIdle();
+
+        advanceTime(3_000);
+        execution.started.get(0).succeed();
+        runUntilIdle();
+        advanceTime(200);
+        execution.started.get(1).succeed();
+        runUntilIdle();
+
+        assertThat(executionDurations().stream().map(Measurement::getDouble).toList(), hasSize(2));
+        assertThat(executionDurations().get(0).getDouble(), closeTo(3.0, 1e-9));
+        assertThat("the second one waited three seconds, and ran for 0.2", executionDurations().get(1).getDouble(), closeTo(0.2, 1e-9));
+    }
+
+    public void testAQueryThatCannotBeDecodedHasNoDuration() {
+        setMaxConcurrent(1);
+        startWindow(newCopy, WINDOW_MILLIS);
+        execution.reaction = Started::succeed;
+        final var garbage = new EncodedQueryRequest(new BytesArray(randomByteArrayOfLength(16)), TransportVersion.current());
+        final var requests = new ArrayList<>(sample(2).requests());
+        requests.add(1, garbage);
+
+        replay(newCopy, new PhantomQuerySample(requests, null));
+        runUntilIdle();
+
+        assertThat(executedByOutcome(), equalTo(Map.of("SUCCESS", 2L, "FAILURE", 1L)));
+        assertThat("only the two that started executing have a duration", executionDurations(), hasSize(2));
+        for (Measurement duration : executionDurations()) {
+            assertThat(duration.attributes(), equalTo(Map.of(PhantomQueryMetrics.QUERY_OUTCOME_ATTRIBUTE, "SUCCESS")));
+        }
+    }
+
+    public void testAQueryThatCompletesTwiceHasOneDuration() {
+        setMaxConcurrent(1);
+        startWindow(newCopy, WINDOW_MILLIS);
+        execution.reaction = query -> {
+            query.succeed();
+            query.fail(new IllegalStateException("simulated"));
+        };
+
+        replay(newCopy, sample(2));
+        runUntilIdle();
+
+        assertThat(executionDurations(), hasSize(2));
+    }
+
+    public void testQueriesThatNeverStartedHaveNoDuration() {
+        setMaxConcurrent(1);
+        startWindow(newCopy, 1_000);
+        replay(newCopy, sample(4));
+        runUntilIdle();
+        advanceTime(1_000);
+
+        execution.started.get(0).fail(new TaskCancelledException("cancelled"));
+        runUntilIdle();
+
+        assertThat("the three that were queued never started", executionDurations(), hasSize(1));
+    }
+
+    // ---- the queries that never started
+
+    private long executedInTotal() {
+        return counterTotal(meterRegistry, PhantomQueryMetrics.EXECUTED_COUNTER);
+    }
+
+    private Map<String, Long> notExecuted() {
+        return counterBy(meterRegistry, PhantomQueryMetrics.NOT_EXECUTED_COUNTER, PhantomQueryMetrics.REPLAY_OUTCOME_ATTRIBUTE);
+    }
+
+    public void testQueriesThatNeverStartedBecauseOfTheDeadlineAreCountedWithItsOutcome() {
+        setMaxConcurrent(2);
+        startWindow(newCopy, 1_000);
+        replay(newCopy, sample(5));
+        runUntilIdle();
+        final List<Started> running = List.copyOf(execution.started);
+        advanceTime(1_000);
+        assertOnlyReplayOutcome(ReplayOutcome.DEADLINE, RecoveryType.NEW_COPY);
+
+        running.forEach(query -> query.fail(new TaskCancelledException("cancelled")));
+        runUntilIdle();
+
+        assertThat("the three that were queued never started", notExecuted(), equalTo(Map.of("DEADLINE", 3L)));
+        assertThat("the two that ran were cancelled", executedByOutcome(), equalTo(Map.of("CANCELLED", 2L)));
+        assertThat(
+            "they add up to the sample",
+            executedInTotal() + counterTotal(meterRegistry, PhantomQueryMetrics.NOT_EXECUTED_COUNTER),
+            equalTo(5L)
+        );
+        for (Measurement measurement : meterRegistry.getRecorder()
+            .getMeasurements(InstrumentType.LONG_COUNTER, PhantomQueryMetrics.NOT_EXECUTED_COUNTER)) {
+            assertThat(measurement.attributes().keySet(), equalTo(Set.of(PhantomQueryMetrics.REPLAY_OUTCOME_ATTRIBUTE)));
+        }
+    }
+
+    public void testQueriesThatNeverStartedBecauseOfACircuitBreakerAreCountedWithItsOutcome() {
+        setMaxConcurrent(2);
+        startWindow(newCopy, WINDOW_MILLIS);
+        replay(newCopy, sample(5));
+        runUntilIdle();
+        final List<Started> running = List.copyOf(execution.started);
+
+        running.get(0).fail(new CircuitBreakingException("too much", CircuitBreaker.Durability.TRANSIENT));
+        runUntilIdle();
+        running.get(1).fail(new TaskCancelledException("cancelled"));
+        runUntilIdle();
+
+        assertOnlyReplayOutcome(ReplayOutcome.BREAKER, RecoveryType.NEW_COPY);
+        assertThat(notExecuted(), equalTo(Map.of("BREAKER", 3L)));
+        assertThat(executedByOutcome(), equalTo(Map.of("FAILURE", 1L, "CANCELLED", 1L)));
+        assertThat(executedInTotal() + counterTotal(meterRegistry, PhantomQueryMetrics.NOT_EXECUTED_COUNTER), equalTo(5L));
+    }
+
+    public void testTheCountsOfAReplayThatIsCutOffAddUpToItsSample() {
+        final int sampleSize = randomIntBetween(1, 30);
+        final int concurrency = randomIntBetween(1, 5);
+        final int finishedBeforeTheDeadline = randomIntBetween(0, sampleSize);
+        setMaxConcurrent(concurrency);
+        startWindow(newCopy, 1_000);
+        replay(newCopy, sample(sampleSize));
+        runUntilIdle();
+        for (int i = 0; i < finishedBeforeTheDeadline; i++) {
+            execution.unfinished().get(0).succeed();
+            runUntilIdle();
+        }
+        final boolean replayWasOver = replays().isEmpty() == false;
+
+        advanceTime(1_000);
+        for (Started query : List.copyOf(execution.unfinished())) {
+            query.fail(new TaskCancelledException("cancelled"));
+        }
+        runUntilIdle();
+
+        assertThat(replays(), hasSize(1));
+        if (replayWasOver) {
+            assertThat("it completed before the deadline", notExecuted(), equalTo(Map.of()));
+        } else {
+            assertThat(
+                "every query of the sample either started or was counted as one that did not",
+                executedInTotal() + counterTotal(meterRegistry, PhantomQueryMetrics.NOT_EXECUTED_COUNTER),
+                equalTo((long) sampleSize)
+            );
+        }
+    }
+
+    public void testACompletedReplayHasNoQueriesThatNeverStarted() {
+        setMaxConcurrent(2);
+        startWindow(newCopy, WINDOW_MILLIS);
+        execution.reaction = Started::succeed;
+
+        replay(newCopy, sample(5));
+        runUntilIdle();
+
+        assertOnlyReplayOutcome(ReplayOutcome.COMPLETED, RecoveryType.NEW_COPY);
+        assertThat(notExecuted(), equalTo(Map.of()));
+        advanceTime(WINDOW_MILLIS);
+        assertThat(notExecuted(), equalTo(Map.of()));
+    }
+
+    public void testASkippedReplayHasNoQueriesThatNeverStarted() {
+        replay(newCopy, sample(3));
+        startWindow(newCopy, -1);
+        replay(newCopy, sample(3));
+        startWindow(newCopy, WINDOW_MILLIS);
+        replay(newCopy, PhantomQuerySample.EMPTY);
+        disablePhantomQueries();
+        replay(newCopy, sample(3));
+
+        assertThat("four replays were skipped", replays(), hasSize(4));
+        assertThat(notExecuted(), equalTo(Map.of()));
+    }
+
+    public void testAnAbandonedReplayHasNoQueriesThatNeverStarted() {
+        setMaxConcurrent(1);
+        startWindow(newCopy, WINDOW_MILLIS);
+        replay(newCopy, sample(4));
+        runUntilIdle();
+        doThrow(recoveryCancelled()).when(shard).ensureRecoveryNotCancelled();
+
+        execution.started.get(0).succeed();
+        runUntilIdle();
+
+        assertThat(replays(), empty());
+        assertThat("the replay has no outcome to attribute them to", notExecuted(), equalTo(Map.of()));
+        assertThat(executedByOutcome(), equalTo(Map.of("SUCCESS", 1L)));
+    }
+
+    public void testQueriesThatCannotBeDecodedAreExecutedAndNotCountedAsNeverStarted() {
+        setMaxConcurrent(1);
+        startWindow(newCopy, WINDOW_MILLIS);
+        execution.reaction = Started::succeed;
+        final var garbage = new EncodedQueryRequest(new BytesArray(randomByteArrayOfLength(16)), TransportVersion.current());
+
+        replay(newCopy, new PhantomQuerySample(List.of(garbage, garbage), null));
+        runUntilIdle();
+
+        assertThat(executedByOutcome(), equalTo(Map.of("FAILURE", 2L)));
+        assertThat(notExecuted(), equalTo(Map.of()));
     }
 
     // ---- what is logged

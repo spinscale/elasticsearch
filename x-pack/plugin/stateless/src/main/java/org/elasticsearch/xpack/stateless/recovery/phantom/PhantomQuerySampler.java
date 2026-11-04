@@ -10,6 +10,7 @@ package org.elasticsearch.xpack.stateless.recovery.phantom;
 import org.elasticsearch.action.search.SearchType;
 import org.elasticsearch.index.seqno.SequenceNumbers;
 import org.elasticsearch.search.internal.ShardSearchRequest;
+import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryMetrics.DropReason;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -55,9 +56,11 @@ final class PhantomQuerySampler {
         // serialized outside the lock, and only for requests that this sampler may still retain
         final EncodedQueryRequest encoded = observed.encoded();
         if (encoded == null) {
+            metrics.recordDropped(DropReason.ENCODING_FAILED);
             return false;
         }
         final long size = encoded.sizeInBytes();
+        DropReason dropped = null;
         synchronized (this) {
             if (closed || accepting == false) {
                 return false;
@@ -65,17 +68,22 @@ final class PhantomQuerySampler {
             // a subtraction, so that a limit near Long.MAX_VALUE cannot overflow the sum
             if (size > maxBytes - retainedBytes) {
                 accepting = false;
-                return false;
+                dropped = DropReason.SAMPLE_BYTES;
+            } else if (nodeBudget.tryReserve(size) == false) {
+                // only drops the request and keeps sampling, since other samples may free budget before the next request arrives
+                dropped = DropReason.NODE_BUDGET;
+            } else {
+                retained.add(encoded);
+                retainedBytes += size;
+                if (retained.size() >= maxQueries) {
+                    accepting = false;
+                }
             }
-            // only drops the request and keeps sampling, since other samples may free budget before the next request arrives
-            if (nodeBudget.tryReserve(size) == false) {
-                return false;
-            }
-            retained.add(encoded);
-            retainedBytes += size;
-            if (retained.size() >= maxQueries) {
-                accepting = false;
-            }
+        }
+        // only a request that reached a sampler that was still accepting is counted, so a full sample keeps costing one flag check
+        if (dropped != null) {
+            metrics.recordDropped(dropped);
+            return false;
         }
         metrics.recordSampled();
         return true;

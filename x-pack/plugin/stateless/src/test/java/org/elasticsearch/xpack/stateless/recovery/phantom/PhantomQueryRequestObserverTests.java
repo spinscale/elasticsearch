@@ -131,7 +131,7 @@ public class PhantomQueryRequestObserverTests extends ESTestCase {
     }
 
     public void testRequestsAreNotLookedAtWhileOnlyOtherShardsAreSampled() {
-        assertThat(samplers.startSampling(shardId, initializingAllocationId(state)), is(true));
+        assertThat(samplers.startSampling(shardId, initializingAllocationId(state)).sampling(), is(true));
         final ShardSearchRequest request = mock(ShardSearchRequest.class);
 
         observer.onQueryPhaseRequest(indexShard(new ShardId(shardId.getIndex(), 1)), request);
@@ -143,7 +143,7 @@ public class PhantomQueryRequestObserverTests extends ESTestCase {
 
     public void testRequestsAreRetainedForTheRecoveringCopy() throws IOException {
         final String target = initializingAllocationId(state);
-        assertThat(samplers.startSampling(shardId, target), is(true));
+        assertThat(samplers.startSampling(shardId, target).sampling(), is(true));
         final int requests = randomIntBetween(1, 10);
 
         for (int i = 0; i < requests; i++) {
@@ -161,7 +161,7 @@ public class PhantomQueryRequestObserverTests extends ESTestCase {
 
     public void testRequestsAreRetainedAsTheyArrivedWhateverHappensToThemAfterwards() throws IOException {
         final String target = initializingAllocationId(state);
-        assertThat(samplers.startSampling(shardId, target), is(true));
+        assertThat(samplers.startSampling(shardId, target).sampling(), is(true));
         final ShardSearchRequest request = request(0);
         final var original = request.source().query();
 
@@ -177,8 +177,8 @@ public class PhantomQueryRequestObserverTests extends ESTestCase {
     public void testEachRecoveringCopyGetsItsOwnSample() throws IOException {
         state = clusterStateWithInitializingSearchReplicas(2);
         final List<String> targets = initializingAllocationIds(state);
-        assertThat(samplers.startSampling(shardId, targets.get(0)), is(true));
-        assertThat(samplers.startSampling(shardId, targets.get(1)), is(true));
+        assertThat(samplers.startSampling(shardId, targets.get(0)).sampling(), is(true));
+        assertThat(samplers.startSampling(shardId, targets.get(1)).sampling(), is(true));
 
         final ShardSearchRequest request = request(0);
         final long size = new ObservedQueryRequest(request).encoded().sizeInBytes();
@@ -192,7 +192,7 @@ public class PhantomQueryRequestObserverTests extends ESTestCase {
 
     public void testNothingIsRetainedWhileDisabled() {
         final String target = initializingAllocationId(state);
-        assertThat(samplers.startSampling(shardId, target), is(true));
+        assertThat(samplers.startSampling(shardId, target).sampling(), is(true));
 
         clusterSettings.applySettings(settings(false));
         observer.onQueryPhaseRequest(indexShard, request(0));
@@ -209,7 +209,7 @@ public class PhantomQueryRequestObserverTests extends ESTestCase {
 
     public void testNothingIsRetainedWhenNoCopyAskedForASample() {
         clusterSettings.applySettings(settings(false));
-        assertThat(samplers.startSampling(shardId, initializingAllocationId(state)), is(false));
+        assertThat(samplers.startSampling(shardId, initializingAllocationId(state)).sampling(), is(false));
 
         observer.onQueryPhaseRequest(indexShard, request(0));
 
@@ -219,7 +219,7 @@ public class PhantomQueryRequestObserverTests extends ESTestCase {
 
     public void testIneligibleRequestsAreNotRetained() {
         final String target = initializingAllocationId(state);
-        assertThat(samplers.startSampling(shardId, target), is(true));
+        assertThat(samplers.startSampling(shardId, target).sampling(), is(true));
 
         observer.onQueryPhaseRequest(indexShard, scrollRequest(shardId, "scroll"));
 
@@ -232,7 +232,7 @@ public class PhantomQueryRequestObserverTests extends ESTestCase {
             Settings.builder().put(settings(true)).put(PhantomQueriesSettings.MAX_QUERIES_PER_SAMPLE_SETTING.getKey(), 2).build()
         );
         final String target = initializingAllocationId(state);
-        assertThat(samplers.startSampling(shardId, target), is(true));
+        assertThat(samplers.startSampling(shardId, target).sampling(), is(true));
 
         for (int i = 0; i < 10; i++) {
             observer.onQueryPhaseRequest(indexShard, request(i));
@@ -244,7 +244,7 @@ public class PhantomQueryRequestObserverTests extends ESTestCase {
 
     public void testRequestsThatFailToSerializeAreSkippedWithoutFailing() throws IOException {
         final String target = initializingAllocationId(state);
-        assertThat(samplers.startSampling(shardId, target), is(true));
+        assertThat(samplers.startSampling(shardId, target).sampling(), is(true));
 
         observer.onQueryPhaseRequest(indexShard, requestThatFailsToSerialize());
         observer.onQueryPhaseRequest(indexShard, request(0));
@@ -254,7 +254,7 @@ public class PhantomQueryRequestObserverTests extends ESTestCase {
     }
 
     public void testTheObserverNeverThrows() {
-        assertThat(samplers.startSampling(shardId, initializingAllocationId(state)), is(true));
+        assertThat(samplers.startSampling(shardId, initializingAllocationId(state)).sampling(), is(true));
         final ShardSearchRequest request = mock(ShardSearchRequest.class);
         when(request.searchType()).thenThrow(new IllegalStateException("unexpected"));
 
@@ -270,7 +270,7 @@ public class PhantomQueryRequestObserverTests extends ESTestCase {
             Settings.builder().put(settings(true)).put(PhantomQueriesSettings.MAX_QUERIES_PER_SAMPLE_SETTING.getKey(), limit).build()
         );
         final String target = initializingAllocationId(state);
-        assertThat(samplers.startSampling(shardId, target), is(true));
+        assertThat(samplers.startSampling(shardId, target).sampling(), is(true));
         final int threads = randomIntBetween(2, 8);
         final AtomicInteger requestNumber = new AtomicInteger();
 

@@ -21,6 +21,7 @@ import org.elasticsearch.index.shard.IndexShardState;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.transport.TransportService;
+import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryMetrics.SamplingStartOutcome;
 import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQuerySamplingActions.CollectSampleRequest;
 import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQuerySamplingActions.CollectSampleResponse;
 import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQuerySamplingActions.StartSamplingRequest;
@@ -44,6 +45,7 @@ public class PhantomQuerySamplingPeer {
     private final IndicesService indicesService;
     private final PhantomQuerySamplers samplers;
     private final PhantomQueriesSettings settings;
+    private final PhantomQueryMetrics metrics;
     private final NamedWriteableRegistry namedWriteableRegistry;
 
     public PhantomQuerySamplingPeer(
@@ -51,12 +53,14 @@ public class PhantomQuerySamplingPeer {
         IndicesService indicesService,
         PhantomQuerySamplers samplers,
         PhantomQueriesSettings settings,
+        PhantomQueryMetrics metrics,
         NamedWriteableRegistry namedWriteableRegistry
     ) {
         this.clusterService = clusterService;
         this.indicesService = indicesService;
         this.samplers = samplers;
         this.settings = settings;
+        this.metrics = metrics;
         this.namedWriteableRegistry = namedWriteableRegistry;
     }
 
@@ -86,25 +90,36 @@ public class PhantomQuerySamplingPeer {
     private boolean startSampling(StartSamplingRequest request) {
         final ShardId shardId = request.shardId();
         final String targetAllocationId = request.targetAllocationId();
-        final String declineReason = declineReason(shardId, targetAllocationId);
-        if (declineReason != null) {
-            logger.debug("{} declined to sample for the copy [{}]: {}", shardId, targetAllocationId, declineReason);
-            return false;
+        SamplingStartOutcome outcome = declineOutcome(shardId, targetAllocationId);
+        if (outcome == null) {
+            // the samplers check again, because the copy may have started or the setting may have changed since
+            outcome = samplers.startSampling(shardId, targetAllocationId);
         }
-        // the samplers check again, because the copy may have started or the setting may have changed since
-        return samplers.startSampling(shardId, targetAllocationId);
+        if (outcome.sampling() == false) {
+            logger.debug("{} declined to sample for the copy [{}]: {}", shardId, targetAllocationId, outcome);
+        }
+        // the only place that records it, whichever of the two checks decided
+        metrics.recordStartSampling(outcome);
+        return outcome.sampling();
     }
 
+    /**
+     * Why the peer declines before it asks the samplers, or {@code null} when it does not.
+     */
     @Nullable
-    private String declineReason(ShardId shardId, String targetAllocationId) {
+    private SamplingStartOutcome declineOutcome(ShardId shardId, String targetAllocationId) {
         if (settings.enabled() == false) {
-            return "phantom queries are disabled";
+            return SamplingStartOutcome.DECLINED_DISABLED;
         }
         if (hasActiveSearchReplica(shardId) == false) {
-            return "no active search replica of the shard on this node";
+            return SamplingStartOutcome.DECLINED_NO_ACTIVE_REPLICA;
         }
-        if (isInitializingSearchReplica(shardId, targetAllocationId) == false) {
-            return "it is not an initializing search replica of the shard";
+        final ShardRouting target = PhantomQuerySamplers.findShard(clusterService.state(), shardId, targetAllocationId);
+        if (target == null) {
+            return SamplingStartOutcome.DECLINED_TARGET_UNKNOWN;
+        }
+        if (target.primary() || target.initializing() == false || isSearchReplica(target) == false) {
+            return SamplingStartOutcome.DECLINED_TARGET_NOT_INITIALIZING;
         }
         return null;
     }
@@ -117,11 +132,6 @@ public class PhantomQuerySamplingPeer {
         }
         final ShardRouting routing = indexShard.routingEntry();
         return routing.active() && isSearchReplica(routing) && indexShard.state() == IndexShardState.STARTED;
-    }
-
-    private boolean isInitializingSearchReplica(ShardId shardId, String allocationId) {
-        final ShardRouting routing = PhantomQuerySamplers.findReplica(clusterService.state(), shardId, allocationId);
-        return routing != null && routing.initializing() && isSearchReplica(routing);
     }
 
     private static boolean isSearchReplica(ShardRouting routing) {

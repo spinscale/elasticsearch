@@ -52,6 +52,7 @@ import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueriesSettings
 import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryMetrics;
 import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryMetrics.RecoveryType;
 import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryMetrics.ReplayOutcome;
+import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryMetrics.ShardSizeBucket;
 import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryReplayer;
 import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQuerySamplers;
 import org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQuerySamplingActions;
@@ -61,25 +62,30 @@ import org.junit.Before;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.UnaryOperator;
 
 import static org.elasticsearch.action.admin.cluster.reroute.ClusterRerouteUtils.reroute;
 import static org.elasticsearch.blobcache.shared.SharedBytes.PAGE_SIZE;
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
+import static org.hamcrest.Matchers.anyOf;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.in;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.lessThan;
 import static org.hamcrest.Matchers.lessThanOrEqualTo;
@@ -255,7 +261,68 @@ public class PhantomQueriesSearchRecoveryIT extends AbstractStatelessPluginInteg
         assertBusy(() -> {
             assertThat("samplers of " + node, samplers(node).samplerCount(), equalTo(0));
             assertThat("bytes of the samples of " + node, samplers(node).usedInBytes(), equalTo(0L));
+            assertThat("the gauge of the samplers of " + node, gauge(node, PhantomQueryMetrics.SAMPLERS_GAUGE), equalTo(0L));
+            assertThat("the gauge of the bytes of " + node, gauge(node, PhantomQueryMetrics.SAMPLE_BYTES_GAUGE), equalTo(0L));
         });
+    }
+
+    // ---- metrics of sampling and replay
+
+    private static Map<String, Long> countersBy(String node, String metric, String attribute) {
+        final TestTelemetryPlugin telemetry = getTelemetryPlugin(node);
+        telemetry.collect();
+        final Map<String, Long> counts = new HashMap<>();
+        for (Measurement measurement : telemetry.getLongCounterMeasurement(metric)) {
+            counts.merge((String) measurement.attributes().get(attribute), measurement.getLong(), Long::sum);
+        }
+        return counts;
+    }
+
+    private static Map<String, Long> startOutcomes(String node) {
+        return countersBy(node, PhantomQueryMetrics.START_SAMPLING_COUNTER, PhantomQueryMetrics.SAMPLING_START_OUTCOME_ATTRIBUTE);
+    }
+
+    private static Map<String, Long> collections(String node) {
+        return countersBy(node, PhantomQueryMetrics.SAMPLE_COLLECTION_COUNTER, PhantomQueryMetrics.COLLECTION_OUTCOME_ATTRIBUTE);
+    }
+
+    private static Map<String, Long> endedSamplers(String node) {
+        return countersBy(node, PhantomQueryMetrics.SAMPLERS_ENDED_COUNTER, PhantomQueryMetrics.SAMPLER_END_ATTRIBUTE);
+    }
+
+    private static Map<String, Long> droppedRequests(String node) {
+        return countersBy(node, PhantomQueryMetrics.DROPPED_COUNTER, PhantomQueryMetrics.DROP_REASON_ATTRIBUTE);
+    }
+
+    private static Map<String, Long> notExecuted(String node) {
+        return countersBy(node, PhantomQueryMetrics.NOT_EXECUTED_COUNTER, PhantomQueryMetrics.REPLAY_OUTCOME_ATTRIBUTE);
+    }
+
+    private static long totalOf(Map<String, Long> counts) {
+        return counts.values().stream().mapToLong(Long::longValue).sum();
+    }
+
+    private static List<Long> longHistogram(String node, String metric) {
+        final TestTelemetryPlugin telemetry = getTelemetryPlugin(node);
+        telemetry.collect();
+        return telemetry.getLongHistogramMeasurement(metric).stream().map(Measurement::getLong).toList();
+    }
+
+    /** What the node reports now, which is the last of the measurements that were collected. */
+    private static long gauge(String node, String metric) {
+        final TestTelemetryPlugin telemetry = getTelemetryPlugin(node);
+        telemetry.collect();
+        final List<Measurement> measurements = telemetry.getLongAsyncGaugeMeasurement(metric);
+        assertThat("[" + metric + "] is reported by " + node, measurements, not(empty()));
+        return measurements.get(measurements.size() - 1).getLong();
+    }
+
+    /** The only sample that the peer handed over, as the number of requests and the kilobytes of its size. */
+    private static void assertTheSampleThatThePeerHandedOver(String peer, long expectedQueries) {
+        assertThat(longHistogram(peer, PhantomQueryMetrics.SAMPLE_QUERIES_HISTOGRAM), equalTo(List.of(expectedQueries)));
+        final List<Long> sizes = longHistogram(peer, PhantomQueryMetrics.SAMPLE_SIZE_HISTOGRAM);
+        assertThat(sizes, hasSize(1));
+        assertThat("a sample with requests has a size", sizes.get(0), expectedQueries > 0 ? greaterThan(0L) : equalTo(0L));
     }
 
     private static void assertThatSearchShardIsStartedOn(String indexName, String nodeName) {
@@ -328,7 +395,12 @@ public class PhantomQueriesSearchRecoveryIT extends AbstractStatelessPluginInteg
                 assertThat("the source samples for the target", samplers(source).samplerCount(), equalTo(1));
                 assertThat("the source retains requests", samplers(source).usedInBytes(), greaterThan(0L));
                 assertThat(sampledQueries(source), greaterThan(0L));
+                assertThat("the gauge of the samplers", gauge(source, PhantomQueryMetrics.SAMPLERS_GAUGE), equalTo(1L));
+                assertThat("the gauge of the bytes", gauge(source, PhantomQueryMetrics.SAMPLE_BYTES_GAUGE), greaterThan(0L));
             });
+            assertThat(startOutcomes(source), equalTo(Map.of("STARTED", 1L)));
+            assertThat("nothing ended while the target recovers", endedSamplers(source), equalTo(Map.of()));
+            assertThat("nothing was collected yet", longHistogram(source, PhantomQueryMetrics.SAMPLE_QUERIES_HISTOGRAM), empty());
             assertThat(startSamplingRequests.get(), equalTo(1));
             assertThat("the sample is collected only once the engine of the target is open", collectSampleRequests.get(), equalTo(0));
             assertThat("the load reaches the source meanwhile", load.completed(), greaterThan(0L));
@@ -343,6 +415,13 @@ public class PhantomQueriesSearchRecoveryIT extends AbstractStatelessPluginInteg
         assertThat("the target collected the sample", collectSampleRequests.get(), equalTo(1));
         assertNothingIsLeftBehind(source);
         assertNothingIsLeftBehind(target);
+        assertThat(endedSamplers(source), equalTo(Map.of("COLLECTED", 1L)));
+        assertThat(collections(target), equalTo(Map.of("COLLECTED", 1L)));
+        final List<Long> sampleQueries = longHistogram(source, PhantomQueryMetrics.SAMPLE_QUERIES_HISTOGRAM);
+        assertThat(sampleQueries, hasSize(1));
+        assertTheSampleThatThePeerHandedOver(source, sampleQueries.get(0));
+        assertThat("the sample has requests", sampleQueries.get(0), greaterThan(0L));
+        assertThat("nothing was dropped within the default limits", droppedRequests(source), equalTo(Map.of()));
     }
 
     public void testCancelledRelocationLeavesNoSampleOnThePeer() throws Exception {
@@ -377,6 +456,23 @@ public class PhantomQueriesSearchRecoveryIT extends AbstractStatelessPluginInteg
         assertNothingIsLeftBehind(source);
         assertNothingIsLeftBehind(target);
         assertThat(sampledQueries(source), greaterThan(0L));
+        assertThat(startOutcomes(source), equalTo(Map.of("STARTED", 1L)));
+        assertBusy(
+            () -> assertThat(
+                "the routing table ended it, and nobody collected it",
+                endedSamplers(source),
+                equalTo(Map.of("TARGET_GONE", 1L))
+            )
+        );
+        assertThat(
+            "a sample that nobody collected is not recorded",
+            longHistogram(source, PhantomQueryMetrics.SAMPLE_QUERIES_HISTOGRAM),
+            empty()
+        );
+        assertThat(longHistogram(source, PhantomQueryMetrics.SAMPLE_SIZE_HISTOGRAM), empty());
+        // the cancelled recovery goes on once the handoff is released, finds that its warming window went with the shard, and skips the
+        // collection
+        assertThat("the target collected nothing", collections(target), anyOf(equalTo(Map.of()), equalTo(Map.of("SKIPPED", 1L))));
     }
 
     public void testNothingIsSampledWhenPhantomQueriesAreDisabledOnTheRecoveringNode() throws Exception {
@@ -409,6 +505,9 @@ public class PhantomQueriesSearchRecoveryIT extends AbstractStatelessPluginInteg
         assertThat(collectSampleRequests.get(), equalTo(0));
         assertThat(sampledQueries(source), equalTo(0L));
         assertNothingIsLeftBehind(source);
+        assertThat("the peer was not asked", startOutcomes(source), equalTo(Map.of()));
+        assertThat(endedSamplers(source), equalTo(Map.of()));
+        assertThat("the replay records that phantom queries were disabled", collections(target), equalTo(Map.of()));
     }
 
     public void testNewCopySamplesTheStartedCopyAndReleasesTheSampleWhenItIsCollected() throws Exception {
@@ -447,6 +546,12 @@ public class PhantomQueriesSearchRecoveryIT extends AbstractStatelessPluginInteg
 
         assertNothingIsLeftBehind(peer);
         assertNothingIsLeftBehind(newCopyNode);
+        assertThat(startOutcomes(peer), equalTo(Map.of("STARTED", 1L)));
+        assertThat(endedSamplers(peer), equalTo(Map.of("COLLECTED", 1L)));
+        assertThat(collections(newCopyNode), equalTo(Map.of("COLLECTED", 1L)));
+        final List<Long> sampleQueries = longHistogram(peer, PhantomQueryMetrics.SAMPLE_QUERIES_HISTOGRAM);
+        assertThat(sampleQueries, hasSize(1));
+        assertTheSampleThatThePeerHandedOver(peer, sampleQueries.get(0));
     }
 
     // ---- replay
@@ -517,17 +622,29 @@ public class PhantomQueriesSearchRecoveryIT extends AbstractStatelessPluginInteg
 
     private static void assertSingleReplay(List<Measurement> replays, ReplayOutcome outcome, RecoveryType recoveryType) {
         assertThat("replays: " + replays, replays, hasSize(1));
+        final Map<String, Object> attributes = replays.get(0).attributes();
         assertThat(
-            replays.get(0).attributes(),
+            attributes.keySet(),
             equalTo(
-                Map.of(
+                Set.of(
                     PhantomQueryMetrics.REPLAY_OUTCOME_ATTRIBUTE,
-                    outcome.name(),
                     PhantomQueryMetrics.RECOVERY_TYPE_ATTRIBUTE,
-                    recoveryType.name()
+                    PhantomQueryMetrics.SHARD_SIZE_BUCKET_ATTRIBUTE
                 )
             )
         );
+        assertThat(attributes.get(PhantomQueryMetrics.REPLAY_OUTCOME_ATTRIBUTE), equalTo(outcome.name()));
+        assertThat(attributes.get(PhantomQueryMetrics.RECOVERY_TYPE_ATTRIBUTE), equalTo(recoveryType.name()));
+        assertThat(
+            "the shard size is one of the buckets",
+            (String) attributes.get(PhantomQueryMetrics.SHARD_SIZE_BUCKET_ATTRIBUTE),
+            is(in(Arrays.stream(ShardSizeBucket.values()).map(ShardSizeBucket::label).toList()))
+        );
+    }
+
+    /** The shards of these tests are far below a gibibyte, and the size of their commit is known once their engine is open. */
+    private static void assertSmallShard(List<Measurement> replays) {
+        assertThat(replays.get(0).attributes().get(PhantomQueryMetrics.SHARD_SIZE_BUCKET_ATTRIBUTE), equalTo("<=1GiB"));
     }
 
     private static void assertThatSearchCopyIsStartedOn(String indexName, String nodeName) {
@@ -648,11 +765,29 @@ public class PhantomQueriesSearchRecoveryIT extends AbstractStatelessPluginInteg
         final Observation enabled = recoverUnderLoad(kind, master, peer, true);
         assertThat("the phantom queries ran", enabled.executedQueries(), greaterThan(0L));
         assertSingleReplay(enabled.replays(), ReplayOutcome.COMPLETED, recoveryType);
+        assertSmallShard(enabled.replays());
         assertThat(executedQueries(enabled.target(), PhantomQueryMetrics.QueryOutcome.SUCCESS), equalTo(enabled.executedQueries()));
+
+        // what the peer sampled is what the recovering copy collected, executed, and timed
+        assertThat(startOutcomes(peer), equalTo(Map.of("STARTED", 1L)));
+        assertThat(endedSamplers(peer), equalTo(Map.of("COLLECTED", 1L)));
+        assertThat(droppedRequests(peer), equalTo(Map.of()));
+        assertThat(collections(enabled.target()), equalTo(Map.of("COLLECTED", 1L)));
+        assertTheSampleThatThePeerHandedOver(peer, enabled.executedQueries());
+        assertThat("a replay that completed leaves nothing that never started", notExecuted(enabled.target()), equalTo(Map.of()));
+        assertThat(
+            "every query that started has a duration",
+            (long) getTelemetryPlugin(enabled.target()).getDoubleHistogramMeasurement(PhantomQueryMetrics.EXECUTION_DURATION_HISTOGRAM)
+                .size(),
+            equalTo(enabled.executedQueries())
+        );
 
         final Observation disabled = recoverUnderLoad(kind, master, peer, false);
         assertThat(disabled.executedQueries(), equalTo(0L));
         assertSingleReplay(disabled.replays(), ReplayOutcome.DISABLED, recoveryType);
+        assertSmallShard(disabled.replays());
+        assertThat("nothing was asked of the peer again", startOutcomes(peer), equalTo(Map.of("STARTED", 1L)));
+        assertThat(collections(disabled.target()), equalTo(Map.of()));
         logger.info("--> {}: enabled {}, disabled {}", kind, enabled, disabled);
 
         assertThat(
@@ -715,7 +850,8 @@ public class PhantomQueriesSearchRecoveryIT extends AbstractStatelessPluginInteg
         try (var load = new SearchLoad(client(master), indexName, 2, blockingQuery)) {
             relocateAwayFrom(peer, indexName);
             safeAwait(collection.received);
-            assertBusy(() -> assertThat(samplers(peer).usedInBytes(), greaterThan(0L)));
+            // more than the two that run at once, so that some queries are still queued at the deadline
+            assertBusy(() -> assertThat(sampledQueries(peer), greaterThan(5L)));
             collection.release();
 
             assertBusy(() -> assertThat("the phantom queries run, and are blocked", BLOCKED_PHANTOM_QUERIES.get(), greaterThan(0)));
@@ -747,6 +883,20 @@ public class PhantomQueriesSearchRecoveryIT extends AbstractStatelessPluginInteg
         assertBusy(() -> assertThat(executedQueries(target, PhantomQueryMetrics.QueryOutcome.CANCELLED), greaterThan(0L)));
         assertNothingIsLeftBehind(peer);
         assertNothingIsLeftBehind(target);
+
+        // the queries that were queued when the deadline ended the replay never start, and each of them is counted once it is found out
+        final List<Long> sampleQueries = longHistogram(peer, PhantomQueryMetrics.SAMPLE_QUERIES_HISTOGRAM);
+        assertThat(sampleQueries, hasSize(1));
+        assertBusy(() -> {
+            assertThat(notExecuted(target).keySet(), equalTo(Set.of("DEADLINE")));
+            assertThat(notExecuted(target).get("DEADLINE"), greaterThan(0L));
+            assertThat(
+                "the queries that started and the ones that did not make up the sample",
+                executedQueries(target) + totalOf(notExecuted(target)),
+                equalTo(sampleQueries.get(0))
+            );
+        });
+        assertThat(collections(target), equalTo(Map.of("COLLECTED", 1L)));
     }
 
     public void testNothingIsReplayedWhenTheWarmingTimedOut() throws Exception {
@@ -773,9 +923,12 @@ public class PhantomQueriesSearchRecoveryIT extends AbstractStatelessPluginInteg
 
         assertThatSearchCopyIsStartedOn(indexName, target);
         assertSingleReplay(target, ReplayOutcome.NO_TIME_LEFT, RecoveryType.RELOCATION);
+        assertSmallShard(replays(target));
         assertThat(executedQueries(target), equalTo(0L));
         assertThat("a sample that cannot be replayed is not collected", collectRequests.get(), equalTo(0));
         assertNothingIsLeftBehind(peer);
+        assertThat("the collection was skipped, which is why there is no sample", collections(target), equalTo(Map.of("SKIPPED", 1L)));
+        assertThat("nothing was collected from the peer", longHistogram(peer, PhantomQueryMetrics.SAMPLE_QUERIES_HISTOGRAM), empty());
     }
 
     private static void markForSigtermShutdown(String nodeName, long startedAtMillis, TimeValue gracePeriod) {
@@ -817,6 +970,7 @@ public class PhantomQueriesSearchRecoveryIT extends AbstractStatelessPluginInteg
         assertSingleReplay(target, ReplayOutcome.NO_WINDOW, RecoveryType.RELOCATION);
         assertThat(executedQueries(target), equalTo(0L));
         assertNothingIsLeftBehind(source);
+        assertThat(collections(target), equalTo(Map.of("SKIPPED", 1L)));
     }
 
     public void testNoWindowWhenANewCopyIsAddedWhileASearchNodeThatHoldsShardsIsMarkedForShutdown() throws Exception {
@@ -848,6 +1002,7 @@ public class PhantomQueriesSearchRecoveryIT extends AbstractStatelessPluginInteg
         assertSingleReplay(newCopyNode, ReplayOutcome.NO_WINDOW, RecoveryType.NEW_COPY);
         assertThat(executedQueries(newCopyNode), equalTo(0L));
         assertNothingIsLeftBehind(peer);
+        assertThat(collections(newCopyNode), equalTo(Map.of("SKIPPED", 1L)));
     }
 
     /** The index node has to be among the allowed nodes, because the filter applies to the primary as well. */
@@ -981,6 +1136,14 @@ public class PhantomQueriesSearchRecoveryIT extends AbstractStatelessPluginInteg
         assertThat(executedQueries(target), equalTo(0L));
         assertThat("the peer sampled nothing", sampledQueries(source), equalTo(0L));
         assertNothingIsLeftBehind(source);
+        assertThat("the peer says why", startOutcomes(source), equalTo(Map.of("DECLINED_DISABLED", 1L)));
+        assertThat("the target says what it got", collections(target), equalTo(Map.of("EMPTY", 1L)));
+        assertThat(endedSamplers(source), equalTo(Map.of()));
+        assertThat(
+            "a peer without a sampler records no sample",
+            longHistogram(source, PhantomQueryMetrics.SAMPLE_QUERIES_HISTOGRAM),
+            empty()
+        );
     }
 
     public void testSampleIsReplayedWhenPointInTimeRelocationIsDisabled() throws Exception {
@@ -1006,5 +1169,66 @@ public class PhantomQueriesSearchRecoveryIT extends AbstractStatelessPluginInteg
         assertThat(executedQueries(target), greaterThan(0L));
         assertSingleReplay(target, ReplayOutcome.COMPLETED, RecoveryType.RELOCATION);
         assertNothingIsLeftBehind(source);
+    }
+
+    // ---- requests that the limits drop
+
+    /**
+     * Relocates the only search copy away from a source that has the given limits, holds the collection of the sample while the load keeps
+     * the source busy, lets the test look at the source at that moment, and finishes the relocation. The sample is empty, because the
+     * limits of the source leave no room for any request.
+     */
+    private void relocateFromASourceWithLimits(Settings limits, Consumer<String> whileTheSourceSamples) throws Exception {
+        final String master = startMasterAndIndexNode();
+        final String source = startSearchNode(Settings.builder().put(phantomQueries(true)).put(limits).build());
+        final String indexName = createIndexWithDocs();
+        final String target = startSearchNode(phantomQueries(true));
+        ensureStableCluster(3);
+        final var collection = new HeldCollection(source);
+
+        try (var load = new SearchLoad(client(master), indexName, 2)) {
+            relocateAwayFrom(source, indexName);
+            safeAwait(collection.received);
+            final long servedBefore = load.completed();
+            assertBusy(() -> assertThat("the load keeps reaching the source", load.completed(), greaterThanOrEqualTo(servedBefore + 50)));
+            whileTheSourceSamples.accept(source);
+            collection.release();
+            ensureGreen(indexName);
+        } finally {
+            collection.release();
+        }
+
+        assertThatSearchCopyIsStartedOn(indexName, target);
+        assertThat("nothing fit", sampledQueries(source), equalTo(0L));
+        assertThat(endedSamplers(source), equalTo(Map.of("COLLECTED", 1L)));
+        assertTheSampleThatThePeerHandedOver(source, 0L);
+        assertThat(collections(target), equalTo(Map.of("EMPTY", 1L)));
+        assertSingleReplay(target, ReplayOutcome.NO_SAMPLE, RecoveryType.RELOCATION);
+        assertThat(executedQueries(target), equalTo(0L));
+        assertNothingIsLeftBehind(source);
+        assertNothingIsLeftBehind(target);
+    }
+
+    public void testTheByteLimitOfASampleDropsOneRequestAndStopsSamplingForTheCopy() throws Exception {
+        // a request is bigger than a byte
+        final var limits = Settings.builder().put(PhantomQueriesSettings.MAX_BYTES_PER_SAMPLE_SETTING.getKey(), "1b").build();
+
+        relocateFromASourceWithLimits(limits, source -> {
+            // the load has served many requests since sampling started, and only the first, which did not fit, is counted
+            assertThat(droppedRequests(source), equalTo(Map.of("SAMPLE_BYTES", 1L)));
+            assertThat("the sampler is still there until the sample is collected", samplers(source).samplerCount(), equalTo(1));
+        });
+    }
+
+    public void testAFullNodeBudgetDropsEveryRequestAndKeepsTheSamplerOpen() throws Exception {
+        final var limits = Settings.builder().put(PhantomQueriesSettings.MAX_BYTES_PER_NODE_SETTING.getKey(), "1b").build();
+
+        relocateFromASourceWithLimits(limits, source -> {
+            assertThat("only the budget of the node dropped requests", droppedRequests(source).keySet(), equalTo(Set.of("NODE_BUDGET")));
+            final long dropped = droppedRequests(source).get("NODE_BUDGET");
+            assertThat("the load went on, and each request that it sent was counted", dropped, greaterThan(1L));
+            assertThat("the sampler stays open, because other samples may free budget", samplers(source).samplerCount(), equalTo(1));
+            assertThat(samplers(source).usedInBytes(), equalTo(0L));
+        });
     }
 }

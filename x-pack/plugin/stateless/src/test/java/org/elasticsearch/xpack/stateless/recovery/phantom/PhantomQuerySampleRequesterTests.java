@@ -17,6 +17,9 @@ import org.elasticsearch.common.util.concurrent.EsExecutors;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.tasks.Task;
+import org.elasticsearch.telemetry.InstrumentType;
+import org.elasticsearch.telemetry.Measurement;
+import org.elasticsearch.telemetry.RecordingMeterRegistry;
 import org.elasticsearch.test.ESTestCase;
 import org.elasticsearch.test.TransportVersionUtils;
 import org.elasticsearch.transport.NodeNotConnectedException;
@@ -44,6 +47,8 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryTestUtils.clusterStateWithInitializingSearchReplica;
 import static org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryTestUtils.clusterStateWithRelocatingSearchReplica;
+import static org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryTestUtils.counterBy;
+import static org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryTestUtils.counterTotal;
 import static org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryTestUtils.encode;
 import static org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryTestUtils.namedWriteableRegistry;
 import static org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryTestUtils.queryRequest;
@@ -84,6 +89,7 @@ public class PhantomQuerySampleRequesterTests extends ESTestCase {
     private ClusterService clusterService;
     private PhantomQueriesSettings settings;
     private SearchRecoveryWarmingWindows windows;
+    private RecordingMeterRegistry meterRegistry;
     private ShardRouting relocatingSource;
     private PhantomQuerySampleRequester requester;
     private Task task;
@@ -125,12 +131,14 @@ public class PhantomQuerySampleRequesterTests extends ESTestCase {
         settings = mock(PhantomQueriesSettings.class);
         when(settings.enabled()).thenReturn(true);
         windows = new SearchRecoveryWarmingWindows();
+        meterRegistry = new RecordingMeterRegistry();
         task = mock(Task.class);
         requester = new PhantomQuerySampleRequester(
             transportService,
             clusterService,
             settings,
             windows,
+            new PhantomQueryMetrics(meterRegistry),
             EsExecutors.DIRECT_EXECUTOR_SERVICE,
             REQUEST_TIMEOUT,
             now::get,
@@ -433,5 +441,226 @@ public class PhantomQuerySampleRequesterTests extends ESTestCase {
         assertThat(collect(PhantomQuerySampleRequester.Sampling.NONE), sameInstance(PhantomQuerySample.EMPTY));
 
         assertThat(sent, empty());
+    }
+
+    // ---- sample collection metrics
+
+    private Map<String, Long> collections() {
+        return counterBy(meterRegistry, PhantomQueryMetrics.SAMPLE_COLLECTION_COUNTER, PhantomQueryMetrics.COLLECTION_OUTCOME_ATTRIBUTE);
+    }
+
+    private Measurement onlyCollection() {
+        final List<Measurement> measurements = meterRegistry.getRecorder()
+            .getMeasurements(InstrumentType.LONG_COUNTER, PhantomQueryMetrics.SAMPLE_COLLECTION_COUNTER);
+        assertThat(measurements, hasSize(1));
+        assertThat(measurements.get(0).getLong(), equalTo(1L));
+        return measurements.get(0);
+    }
+
+    private void assertOnlyCollection(String outcome, String recoveryType) {
+        final Measurement collection = onlyCollection();
+        assertThat(
+            collection.attributes(),
+            equalTo(
+                Map.of(PhantomQueryMetrics.COLLECTION_OUTCOME_ATTRIBUTE, outcome, PhantomQueryMetrics.RECOVERY_TYPE_ATTRIBUTE, recoveryType)
+            )
+        );
+    }
+
+    private PhantomQuerySample collectFromPeer(ShardRouting recovering, PhantomQuerySample sampleOfThePeer) {
+        giveWindowWithTimeLeft(recovering);
+        final var sampling = requester.startSampling(task, recovering);
+        sent.clear();
+        final var future = new PlainActionFuture<PhantomQuerySample>();
+        sampling.collectSample(task, future);
+        final TransportResponseHandler<CollectSampleResponse> handler = handlerOf(onlySent());
+        handler.handleResponse(new CollectSampleResponse(sampleOfThePeer));
+        return safeGet(future);
+    }
+
+    public void testCountsASampleThatWasCollected() {
+        final boolean relocation = randomBoolean();
+        final ShardRouting recovering = relocation ? recoveringRelocationTarget() : recoveringNewCopy();
+        final var sample = new PhantomQuerySample(List.of(encode(queryRequest(shardId, "value"))), namedWriteableRegistry());
+
+        assertThat(collectFromPeer(recovering, sample), sameInstance(sample));
+
+        assertOnlyCollection("COLLECTED", relocation ? "RELOCATION" : "NEW_COPY");
+    }
+
+    public void testCountsAnEmptySampleThatThePeerReturned() {
+        final boolean relocation = randomBoolean();
+        final ShardRouting recovering = relocation ? recoveringRelocationTarget() : recoveringNewCopy();
+
+        assertThat(collectFromPeer(recovering, PhantomQuerySample.EMPTY).isEmpty(), is(true));
+
+        assertOnlyCollection("EMPTY", relocation ? "RELOCATION" : "NEW_COPY");
+    }
+
+    public void testNothingIsCountedBeforeTheSampleIsCollected() {
+        final ShardRouting recovering = recoveringRelocationTarget();
+        giveWindowWithTimeLeft(recovering);
+
+        requester.startSampling(task, recovering);
+
+        assertThat(counterTotal(meterRegistry, PhantomQueryMetrics.SAMPLE_COLLECTION_COUNTER), equalTo(0L));
+    }
+
+    public void testCountsARecoveryThatHasNoPeerWhenTheShardHasNoStartedSearchCopy() {
+        final ClusterState state = PhantomQueryTestUtils.clusterStateWithInitializingSearchReplica();
+        final var withoutStartedCopy = PhantomQueryTestUtils.withShards(
+            state,
+            shards(state).stream().filter(routing -> routing.started() == false || routing.isSearchable() == false).toList()
+        );
+        final ShardRouting recovering = runAsRecoveringCopy(
+            withoutStartedCopy,
+            shards(withoutStartedCopy).stream().filter(ShardRouting::initializing).findFirst().orElseThrow()
+        );
+
+        final var sampling = requester.startSampling(task, recovering);
+
+        assertOnlyCollection("NO_PEER", "NEW_COPY");
+        collect(sampling);
+        assertThat(
+            "collecting nothing records nothing more",
+            counterTotal(meterRegistry, PhantomQueryMetrics.SAMPLE_COLLECTION_COUNTER),
+            equalTo(1L)
+        );
+    }
+
+    public void testCountsARecoveryThatHasNoPeerWhenNoPeerSupportsSampling() {
+        connectionVersion = TransportVersionUtils.randomVersionNotSupporting(PhantomQuerySamplingActions.TRANSPORT_VERSION);
+        final boolean relocation = randomBoolean();
+        final ShardRouting recovering = relocation ? recoveringRelocationTarget() : recoveringNewCopy();
+        giveWindowWithTimeLeft(recovering);
+
+        collect(requester.startSampling(task, recovering));
+
+        assertOnlyCollection("NO_PEER", relocation ? "RELOCATION" : "NEW_COPY");
+    }
+
+    public void testCountsARecoveryThatHasNoPeerWhenThePeerIsNotConnected() {
+        final ShardRouting recovering = recoveringRelocationTarget();
+        doThrow(new NodeNotConnectedException(clusterService.state().nodes().get(relocatingSource.currentNodeId()), "not connected")).when(
+            transportService
+        ).getConnection(any(DiscoveryNode.class));
+
+        collect(requester.startSampling(task, recovering));
+
+        assertOnlyCollection("NO_PEER", "RELOCATION");
+    }
+
+    public void testCountsNothingWhilePhantomQueriesAreDisabled() {
+        when(settings.enabled()).thenReturn(false);
+
+        collect(requester.startSampling(task, recoveringNewCopy()));
+
+        assertThat(
+            "the replay records that they were disabled",
+            counterTotal(meterRegistry, PhantomQueryMetrics.SAMPLE_COLLECTION_COUNTER),
+            equalTo(0L)
+        );
+    }
+
+    public void testCountsAnUnexpectedFailureToChooseAPeerAsFailed() {
+        final ShardRouting recovering = recoveringNewCopy();
+        when(clusterService.state()).thenThrow(new IllegalStateException("simulated"));
+
+        collect(requester.startSampling(task, recovering));
+
+        assertOnlyCollection("FAILED", "NEW_COPY");
+    }
+
+    public void testCountsAFailureToSendTheRequestToStartAsFailedOnce() {
+        final ShardRouting recovering = recoveringRelocationTarget();
+        giveWindowWithTimeLeft(recovering);
+        doThrow(new IllegalStateException("simulated")).when(transportService)
+            .sendChildRequest(
+                any(Transport.Connection.class),
+                anyString(),
+                any(TransportRequest.class),
+                any(Task.class),
+                any(TransportRequestOptions.class),
+                any()
+            );
+
+        collect(requester.startSampling(task, recovering));
+
+        assertOnlyCollection("FAILED", "RELOCATION");
+    }
+
+    public void testCountsACollectionThatWasNotAttemptedAsSkipped() {
+        // no window: warming that does not wait
+        ShardRouting recovering = recoveringRelocationTarget();
+        collect(requester.startSampling(task, recovering));
+        assertThat(collections(), equalTo(Map.of("SKIPPED", 1L)));
+
+        // a window that is used up
+        recovering = recoveringRelocationTarget();
+        final var usedUp = requester.startSampling(task, recovering);
+        windows.startWindow(shardId, allocationId(recovering), now.get() - randomLongBetween(0, 60_000));
+        collect(usedUp);
+        assertThat(collections(), equalTo(Map.of("SKIPPED", 2L)));
+
+        // the setting was disabled since the request to sample
+        recovering = recoveringRelocationTarget();
+        giveWindowWithTimeLeft(recovering);
+        final var disabledSince = requester.startSampling(task, recovering);
+        when(settings.enabled()).thenReturn(false);
+        collect(disabledSince);
+        assertThat(collections(), equalTo(Map.of("SKIPPED", 3L)));
+        assertThat(
+            sent.stream().map(Sent::action).filter(PhantomQuerySamplingActions.COLLECT_SAMPLE_ACTION_NAME::equals).count(),
+            equalTo(0L)
+        );
+    }
+
+    public void testCountsAFailedOrTimedOutCollectionAsFailed() {
+        final ShardRouting recovering = recoveringRelocationTarget();
+        giveWindowWithTimeLeft(recovering);
+        final var sampling = requester.startSampling(task, recovering);
+        sent.clear();
+        sampling.collectSample(task, new PlainActionFuture<>());
+        final TransportResponseHandler<CollectSampleResponse> handler = handlerOf(onlySent());
+
+        handler.handleException(new TransportException("simulated, for example a timeout"));
+
+        assertOnlyCollection("FAILED", "RELOCATION");
+    }
+
+    public void testCountsAFailureToSendTheRequestToCollectAsFailed() {
+        final ShardRouting recovering = recoveringNewCopy();
+        giveWindowWithTimeLeft(recovering);
+        final var sampling = requester.startSampling(task, recovering);
+        sent.clear();
+        doThrow(new IllegalStateException("simulated")).when(transportService).getConnection(any(DiscoveryNode.class));
+
+        collect(sampling);
+
+        assertOnlyCollection("FAILED", "NEW_COPY");
+    }
+
+    public void testCountsNothingForTheCollectionOfNoSampling() {
+        collect(PhantomQuerySampleRequester.Sampling.NONE);
+
+        assertThat(counterTotal(meterRegistry, PhantomQueryMetrics.SAMPLE_COLLECTION_COUNTER), equalTo(0L));
+    }
+
+    public void testOneRecoveryIsCountedAtMostOnce() {
+        final ShardRouting recovering = recoveringRelocationTarget();
+        giveWindowWithTimeLeft(recovering);
+        final var sampling = requester.startSampling(task, recovering);
+        // whatever the peer answers to the request to start sampling
+        final TransportResponseHandler<StartSamplingResponse> start = handlerOf(onlySent());
+        start.handleResponse(new StartSamplingResponse(randomBoolean()));
+        start.handleException(new TransportException("simulated"));
+        assertThat(counterTotal(meterRegistry, PhantomQueryMetrics.SAMPLE_COLLECTION_COUNTER), equalTo(0L));
+        sent.clear();
+
+        sampling.collectSample(task, new PlainActionFuture<>());
+        final TransportResponseHandler<CollectSampleResponse> collect = handlerOf(onlySent());
+        collect.handleResponse(new CollectSampleResponse(PhantomQuerySample.EMPTY));
+
+        assertThat(collections(), equalTo(Map.of("EMPTY", 1L)));
     }
 }

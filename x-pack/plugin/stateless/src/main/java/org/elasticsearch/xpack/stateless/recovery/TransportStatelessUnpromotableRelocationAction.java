@@ -177,13 +177,20 @@ public class TransportStatelessUnpromotableRelocationAction extends TransportAct
             StartHandoffRequest::new,
             (request, channel, task) -> handleStartHandoff(request, new ChannelActionListener<>(channel))
         );
-        new PhantomQuerySamplingPeer(clusterService, indicesService, phantomQuerySamplers, phantomQueriesSettings, namedWriteableRegistry)
-            .registerHandlers(transportService, recoveryExecutor);
+        new PhantomQuerySamplingPeer(
+            clusterService,
+            indicesService,
+            phantomQuerySamplers,
+            phantomQueriesSettings,
+            phantomQueryMetrics,
+            namedWriteableRegistry
+        ).registerHandlers(transportService, recoveryExecutor);
         this.phantomQuerySampleRequester = new PhantomQuerySampleRequester(
             transportService,
             clusterService,
             phantomQueriesSettings,
             searchRecoveryWarmingWindows,
+            phantomQueryMetrics,
             recoveryExecutor,
             startHandoffRequestTimeout
         );

@@ -41,12 +41,15 @@ import org.junit.Before;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executor;
 
 import static org.elasticsearch.cluster.metadata.Metadata.DEFAULT_PROJECT_ID;
 import static org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryTestUtils.INDEX_NAME;
 import static org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryTestUtils.clusterStateWithInitializingSearchReplica;
+import static org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryTestUtils.counterBy;
+import static org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryTestUtils.counterTotal;
 import static org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryTestUtils.initializingAllocationId;
 import static org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryTestUtils.namedWriteableRegistry;
 import static org.elasticsearch.xpack.stateless.recovery.phantom.PhantomQueryTestUtils.queryRequest;
@@ -68,6 +71,8 @@ public class PhantomQuerySamplingPeerTests extends ESTestCase {
     private ClusterSettings clusterSettings;
     private ClusterService clusterService;
     private PhantomQuerySamplers samplers;
+    private RecordingMeterRegistry meterRegistry;
+    private PhantomQueryMetrics metrics;
     private IndicesService indicesService;
     private IndexService localIndexService;
     private IndexShard localShard;
@@ -78,12 +83,9 @@ public class PhantomQuerySamplingPeerTests extends ESTestCase {
         threadPool = new TestThreadPool(getTestName());
         initialState = clusterStateWithInitializingSearchReplica();
         clusterService = createClusterService(initialState);
-        samplers = new PhantomQuerySamplers(
-            threadPool,
-            clusterService,
-            new PhantomQueriesSettings(clusterSettings),
-            new PhantomQueryMetrics(new RecordingMeterRegistry())
-        );
+        meterRegistry = new RecordingMeterRegistry();
+        metrics = new PhantomQueryMetrics(meterRegistry);
+        samplers = new PhantomQuerySamplers(threadPool, clusterService, new PhantomQueriesSettings(clusterSettings), metrics);
         indicesService = mock(IndicesService.class);
         localIndexService = mock(IndexService.class);
         localShard = mock(IndexShard.class);
@@ -117,6 +119,7 @@ public class PhantomQuerySamplingPeerTests extends ESTestCase {
             indicesService,
             samplers,
             new PhantomQueriesSettings(clusterSettings),
+            metrics,
             namedWriteableRegistry()
         );
     }
@@ -418,6 +421,135 @@ public class PhantomQuerySamplingPeerTests extends ESTestCase {
 
         assertThat(read.sample().size(), equalTo(1));
         assertThat(read.sample().requests().get(0).version(), equalTo(olderVersion));
+    }
+
+    // ---- start outcomes
+
+    private Map<String, Long> startOutcomes() {
+        return counterBy(meterRegistry, PhantomQueryMetrics.START_SAMPLING_COUNTER, PhantomQueryMetrics.SAMPLING_START_OUTCOME_ATTRIBUTE);
+    }
+
+    public void testCountsAStartedSampler() {
+        assertThat(startSampling(peer(), startRequest(initializingAllocationId(initialState))), is(true));
+
+        assertThat(startOutcomes(), equalTo(Map.of("STARTED", 1L)));
+    }
+
+    public void testCountsARepeatedRequestThatKeptTheSampler() {
+        final String target = initializingAllocationId(initialState);
+        final var peer = peer();
+
+        assertThat(startSampling(peer, startRequest(target)), is(true));
+        assertThat(startSampling(peer, startRequest(target)), is(true));
+        assertThat(startSampling(peer, startRequest(target)), is(true));
+
+        assertThat(startOutcomes(), equalTo(Map.of("STARTED", 1L, "ALREADY_STARTED", 2L)));
+    }
+
+    public void testCountsADeclineBecauseTheSettingIsDisabled() {
+        setEnabled(false);
+
+        assertThat(startSampling(peer(), startRequest(initializingAllocationId(initialState))), is(false));
+
+        assertThat(startOutcomes(), equalTo(Map.of("DECLINED_DISABLED", 1L)));
+    }
+
+    public void testCountsADeclineBecauseThePeerHasNoActiveSearchReplica() {
+        final String target = initializingAllocationId(initialState);
+        final var peer = peer();
+
+        when(indicesService.indexService(shardId.getIndex())).thenReturn(null);
+        assertThat(startSampling(peer, startRequest(target)), is(false));
+        when(indicesService.indexService(shardId.getIndex())).thenReturn(localIndexService);
+        when(localIndexService.getShardOrNull(shardId.id())).thenReturn(null);
+        assertThat(startSampling(peer, startRequest(target)), is(false));
+        when(localIndexService.getShardOrNull(shardId.id())).thenReturn(localShard);
+        when(localShard.state()).thenReturn(IndexShardState.RECOVERING);
+        assertThat(startSampling(peer, startRequest(target)), is(false));
+        when(localShard.state()).thenReturn(IndexShardState.STARTED);
+        when(localShard.routingEntry()).thenReturn(shards(initialState).stream().filter(ShardRouting::primary).findFirst().orElseThrow());
+        assertThat(startSampling(peer, startRequest(target)), is(false));
+
+        assertThat(startOutcomes(), equalTo(Map.of("DECLINED_NO_ACTIVE_REPLICA", 4L)));
+    }
+
+    public void testCountsADeclineBecauseThePeerDoesNotKnowTheTargetYet() {
+        final String target = initializingAllocationId(initialState);
+        applyClusterState(PhantomQueryTestUtils.withoutCopy(initialState, target));
+        final var peer = peer();
+
+        assertThat(startSampling(peer, startRequest(target)), is(false));
+        assertThat(startSampling(peer, startRequest(randomUUID())), is(false));
+        applyClusterState(PhantomQueryTestUtils.withoutIndex());
+        assertThat(startSampling(peer, startRequest(target)), is(false));
+
+        assertThat(startOutcomes(), equalTo(Map.of("DECLINED_TARGET_UNKNOWN", 3L)));
+    }
+
+    public void testCountsAPeerThatCaughtUpAfterItDeclinedBecauseItDidNotKnowTheTarget() {
+        final String target = initializingAllocationId(initialState);
+        applyClusterState(PhantomQueryTestUtils.withoutCopy(initialState, target));
+        final var peer = peer();
+        assertThat(startSampling(peer, startRequest(target)), is(false));
+
+        applyClusterState(initialState);
+        assertThat(startSampling(peer, startRequest(target)), is(true));
+
+        assertThat(startOutcomes(), equalTo(Map.of("DECLINED_TARGET_UNKNOWN", 1L, "STARTED", 1L)));
+    }
+
+    public void testCountsADeclineBecauseTheTargetIsKnownButNotAnInitializingSearchReplica() {
+        final var peer = peer();
+        // a started copy, and a primary
+        for (ShardRouting routing : shards(initialState).stream().filter(ShardRouting::started).toList()) {
+            assertThat(startSampling(peer, startRequest(routing.allocationId().getId())), is(false));
+        }
+        // an initializing copy that cannot serve searches
+        final ClusterState withInitializingIndexCopy = ClusterStateCreationUtils.state(
+            DEFAULT_PROJECT_ID,
+            INDEX_NAME,
+            true,
+            ShardRoutingState.STARTED,
+            ShardRouting.Role.INDEX_ONLY,
+            List.of(
+                new Tuple<>(ShardRoutingState.STARTED, ShardRouting.Role.SEARCH_ONLY),
+                new Tuple<>(ShardRoutingState.INITIALIZING, ShardRouting.Role.INDEX_ONLY)
+            )
+        );
+        applyClusterState(withInitializingIndexCopy);
+        assertThat(startSampling(peer, startRequest(initializingAllocationId(withInitializingIndexCopy))), is(false));
+        // a copy that started before this node caught up
+        applyClusterState(initialState);
+        final String target = initializingAllocationId(initialState);
+        applyClusterState(PhantomQueryTestUtils.withCopyStarted(initialState, target));
+        assertThat(startSampling(peer, startRequest(target)), is(false));
+
+        final long expected = shards(initialState).stream().filter(ShardRouting::started).count() + 2;
+        assertThat(startOutcomes(), equalTo(Map.of("DECLINED_TARGET_NOT_INITIALIZING", expected)));
+    }
+
+    public void testCountsEveryRequestExactlyOnce() {
+        final String target = initializingAllocationId(initialState);
+        final var peer = peer();
+        final int requests = randomIntBetween(1, 20);
+
+        for (int i = 0; i < requests; i++) {
+            startSampling(peer, startRequest(randomBoolean() ? target : randomUUID()));
+        }
+
+        assertThat(counterTotal(meterRegistry, PhantomQueryMetrics.START_SAMPLING_COUNTER), equalTo((long) requests));
+    }
+
+    public void testTheOutcomeThatIsCountedIsTheOneThatTheRequesterGets() {
+        final String target = initializingAllocationId(initialState);
+        final var peer = peer();
+
+        final boolean accepted = startSampling(peer, startRequest(target));
+        final boolean repeated = startSampling(peer, startRequest(target));
+        final boolean unknown = startSampling(peer, startRequest(randomUUID()));
+
+        assertThat(List.of(accepted, repeated, unknown), equalTo(List.of(true, true, false)));
+        assertThat(startOutcomes(), equalTo(Map.of("STARTED", 1L, "ALREADY_STARTED", 1L, "DECLINED_TARGET_UNKNOWN", 1L)));
     }
 
     public void testRegistersTheHandlersOnTheGivenExecutor() {

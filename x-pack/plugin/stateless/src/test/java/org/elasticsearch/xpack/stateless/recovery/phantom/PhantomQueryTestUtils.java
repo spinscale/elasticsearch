@@ -32,9 +32,13 @@ import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.search.internal.AliasFilter;
 import org.elasticsearch.search.internal.ShardSearchContextId;
 import org.elasticsearch.search.internal.ShardSearchRequest;
+import org.elasticsearch.telemetry.InstrumentType;
+import org.elasticsearch.telemetry.Measurement;
+import org.elasticsearch.telemetry.RecordingMeterRegistry;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -210,5 +214,54 @@ final class PhantomQueryTestUtils {
 
     private static boolean hasAllocationId(ShardRouting routing, String allocationId) {
         return routing.allocationId() != null && routing.allocationId().getId().equals(allocationId);
+    }
+
+    // ---- metrics
+
+    /** What a counter counted in all, whatever its attributes. */
+    static long counterTotal(RecordingMeterRegistry meterRegistry, String metric) {
+        return meterRegistry.getRecorder()
+            .getMeasurements(InstrumentType.LONG_COUNTER, metric)
+            .stream()
+            .mapToLong(Measurement::getLong)
+            .sum();
+    }
+
+    /** What a counter counted, by the value of one of its attributes. */
+    static Map<String, Long> counterBy(RecordingMeterRegistry meterRegistry, String metric, String attribute) {
+        final Map<String, Long> counts = new HashMap<>();
+        for (Measurement measurement : meterRegistry.getRecorder().getMeasurements(InstrumentType.LONG_COUNTER, metric)) {
+            counts.merge((String) measurement.attributes().get(attribute), measurement.getLong(), Long::sum);
+        }
+        return counts;
+    }
+
+    /** The values that a histogram of whole numbers recorded, in order. */
+    static List<Long> longHistogram(RecordingMeterRegistry meterRegistry, String metric) {
+        return meterRegistry.getRecorder()
+            .getMeasurements(InstrumentType.LONG_HISTOGRAM, metric)
+            .stream()
+            .map(Measurement::getLong)
+            .toList();
+    }
+
+    /** The values that a histogram of fractions recorded, in order. */
+    static List<Double> doubleHistogram(RecordingMeterRegistry meterRegistry, String metric) {
+        return meterRegistry.getRecorder()
+            .getMeasurements(InstrumentType.DOUBLE_HISTOGRAM, metric)
+            .stream()
+            .map(Measurement::getDouble)
+            .toList();
+    }
+
+    /** What an asynchronous gauge reports now. */
+    static long gauge(RecordingMeterRegistry meterRegistry, String metric) {
+        meterRegistry.getRecorder().resetCalls();
+        meterRegistry.getRecorder().collect();
+        final List<Measurement> measurements = meterRegistry.getRecorder().getMeasurements(InstrumentType.LONG_ASYNC_GAUGE, metric);
+        if (measurements.size() != 1) {
+            throw new AssertionError("expected one measurement of [" + metric + "] but got " + measurements);
+        }
+        return measurements.get(0).getLong();
     }
 }
