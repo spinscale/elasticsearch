@@ -67,6 +67,7 @@ public class PhantomQuerySamplers implements IndexEventListener, ClusterStateLis
     private final ConcurrentMap<ShardId, Map<String, Entry>> entriesByShard = ConcurrentCollections.newConcurrentMap();
     private volatile TimeValue leaseDuration;
 
+    @SuppressWarnings("this-escape") // the gauges are registered last, after every field is assigned
     public PhantomQuerySamplers(
         ThreadPool threadPool,
         ClusterService clusterService,
