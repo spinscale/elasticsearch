@@ -57,12 +57,13 @@ public class TransportPutShutdownNodeAction extends AcknowledgedTransportMasterN
         }
 
         final boolean nodeSeen = nodeExists.test(request.getNodeId());
+        final SingleNodeShutdownMetadata existingRecord = shutdownMetadata.get(request.getNodeId());
         SingleNodeShutdownMetadata newNodeMetadata = SingleNodeShutdownMetadata.builder()
             .setNodeId(request.getNodeId())
             .setNodeEphemeralId(nodeEphemeralId)
             .setType(request.getType())
             .setReason(request.getReason())
-            .setStartedAtMillis(System.currentTimeMillis())
+            .setStartedAtMillis(startedAtMillis(existingRecord, request, nodeEphemeralId))
             .setNodeSeen(nodeSeen)
             .setAllocationDelay(request.getAllocationDelay())
             .setTargetNodeName(request.getTargetNodeName())
@@ -70,7 +71,6 @@ public class TransportPutShutdownNodeAction extends AcknowledgedTransportMasterN
             .build();
 
         // log the update
-        SingleNodeShutdownMetadata existingRecord = shutdownMetadata.get(request.getNodeId());
         if (existingRecord != null) {
             logger.info("updating existing shutdown record {} with new record {}", existingRecord, newNodeMetadata);
         } else {
@@ -79,6 +79,21 @@ public class TransportPutShutdownNodeAction extends AcknowledgedTransportMasterN
 
         shutdownMetadata.put(request.getNodeId(), newNodeMetadata);
         return true;
+    }
+
+    /**
+     * A SIGTERM shutdown of the same node (same ephemeral id) that is only updated, for example to extend its grace period, keeps its
+     * original start time. The start time identifies the shutdown signal for other components, so an update must not look like a new
+     * shutdown. In all other cases the shutdown starts now.
+     */
+    private static long startedAtMillis(SingleNodeShutdownMetadata existing, Request request, String nodeEphemeralId) {
+        if (existing != null
+            && existing.getType() == SingleNodeShutdownMetadata.Type.SIGTERM
+            && request.getType() == SingleNodeShutdownMetadata.Type.SIGTERM
+            && Objects.equals(existing.getNodeEphemeralId(), nodeEphemeralId)) {
+            return existing.getStartedAtMillis();
+        }
+        return System.currentTimeMillis();
     }
 
     // package private for tests
@@ -188,7 +203,8 @@ public class TransportPutShutdownNodeAction extends AcknowledgedTransportMasterN
             && existing.getType().equals(request.getType())
             && existing.getReason().equals(request.getReason())
             && Objects.equals(existing.getAllocationDelay(), request.getAllocationDelay())
-            && Objects.equals(existing.getTargetNodeName(), request.getTargetNodeName());
+            && Objects.equals(existing.getTargetNodeName(), request.getTargetNodeName())
+            && Objects.equals(existing.getGracePeriod(), request.getGracePeriod());
     }
 
     @Override

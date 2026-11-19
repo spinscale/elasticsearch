@@ -13,6 +13,9 @@ import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.ClusterStateTaskExecutor;
 import org.elasticsearch.cluster.ClusterStateTaskExecutor.TaskContext;
+import org.elasticsearch.cluster.metadata.Metadata;
+import org.elasticsearch.cluster.metadata.NodesShutdownMetadata;
+import org.elasticsearch.cluster.metadata.SingleNodeShutdownMetadata;
 import org.elasticsearch.cluster.metadata.SingleNodeShutdownMetadata.Type;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
@@ -38,6 +41,8 @@ import java.util.Set;
 
 import static org.elasticsearch.core.Strings.format;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 import static org.hamcrest.Matchers.sameInstance;
@@ -176,5 +181,122 @@ public class TransportPutShutdownNodeActionTests extends ESTestCase {
                 .getMessage(),
             containsString("grace period is required for SIGTERM shutdowns")
         );
+    }
+
+    public void testSigtermGracePeriodChangeIsNotNoop() throws Exception {
+        var shortGracePeriod = TimeValue.timeValueMinutes(14);
+        var longGracePeriod = TimeValue.timeValueHours(1);
+        var state = stateWithNode();
+
+        state = executePutShutdown(state, sigtermRequest(shortGracePeriod));
+        assertThat(state.metadata().nodeShutdowns().get("node1").getGracePeriod(), equalTo(shortGracePeriod));
+
+        // the same request again is a no-op
+        clearTaskQueueInvocations();
+        action.masterOperation(null, sigtermRequest(shortGracePeriod), state, ActionListener.noop());
+        verifyNoInteractions(taskQueue);
+
+        // a request that only changes the grace period is not a no-op
+        action.masterOperation(null, sigtermRequest(longGracePeriod), state, ActionListener.noop());
+        verify(taskQueue).submitTask(any(), any(PutShutdownNodeTask.class), any());
+
+        state = executePutShutdown(state, sigtermRequest(longGracePeriod));
+        var updated = state.metadata().nodeShutdowns().get("node1");
+        assertThat(updated.getType(), equalTo(Type.SIGTERM));
+        assertThat(updated.getGracePeriod(), equalTo(longGracePeriod));
+    }
+
+    public void testSigtermUpdateKeepsStartedAtForSameEphemeralId() throws Exception {
+        var shortGracePeriod = TimeValue.timeValueMinutes(14);
+        var longGracePeriod = TimeValue.timeValueHours(1);
+        // use a start time in the past so that a reset to the current time is detectable
+        var startedAtMillis = System.currentTimeMillis() - TimeValue.timeValueHours(2).millis();
+        var existing = shutdownMetadata(Type.SIGTERM, "eph-node1", shortGracePeriod, startedAtMillis);
+
+        var state = executePutShutdown(stateWithNode(existing), sigtermRequest(longGracePeriod));
+
+        var updated = state.metadata().nodeShutdowns().get("node1");
+        assertThat(updated.getGracePeriod(), equalTo(longGracePeriod));
+        assertThat(updated.getStartedAtMillis(), equalTo(startedAtMillis));
+    }
+
+    public void testSigtermUpdateResetsStartedAtForDifferentEphemeralId() throws Exception {
+        var shortGracePeriod = TimeValue.timeValueMinutes(14);
+        var longGracePeriod = TimeValue.timeValueHours(1);
+        var startedAtMillis = System.currentTimeMillis() - TimeValue.timeValueHours(2).millis();
+        // the node restarted since the shutdown record was written, so the record belongs to the previous node instance
+        var existing = shutdownMetadata(Type.SIGTERM, "eph-previous-node1", shortGracePeriod, startedAtMillis);
+
+        var state = executePutShutdown(stateWithNode(existing), sigtermRequest(longGracePeriod));
+
+        var updated = state.metadata().nodeShutdowns().get("node1");
+        assertThat(updated.getNodeEphemeralId(), equalTo("eph-node1"));
+        assertThat(updated.getGracePeriod(), equalTo(longGracePeriod));
+        assertThat(updated.getStartedAtMillis(), greaterThan(startedAtMillis));
+    }
+
+    public void testSigtermRequestResetsStartedAtWhenExistingTypeIsNotSigterm() throws Exception {
+        var startedAtMillis = System.currentTimeMillis() - TimeValue.timeValueHours(2).millis();
+        var existing = shutdownMetadata(Type.REMOVE, "eph-node1", null, startedAtMillis);
+
+        var state = executePutShutdown(stateWithNode(existing), sigtermRequest(TimeValue.timeValueMinutes(14)));
+
+        var updated = state.metadata().nodeShutdowns().get("node1");
+        assertThat(updated.getType(), equalTo(Type.SIGTERM));
+        assertThat(updated.getStartedAtMillis(), greaterThan(startedAtMillis));
+    }
+
+    private static PutShutdownNodeAction.Request sigtermRequest(TimeValue gracePeriod) {
+        return new PutShutdownNodeAction.Request(
+            TEST_REQUEST_TIMEOUT,
+            TEST_REQUEST_TIMEOUT,
+            "node1",
+            Type.SIGTERM,
+            "node sigterm",
+            null,
+            null,
+            gracePeriod
+        );
+    }
+
+    private static SingleNodeShutdownMetadata shutdownMetadata(
+        Type type,
+        String nodeEphemeralId,
+        TimeValue gracePeriod,
+        long startedAtMillis
+    ) {
+        return SingleNodeShutdownMetadata.builder()
+            .setNodeId("node1")
+            .setNodeEphemeralId(nodeEphemeralId)
+            .setType(type)
+            .setReason("node sigterm")
+            .setStartedAtMillis(startedAtMillis)
+            .setNodeSeen(true)
+            .setGracePeriod(gracePeriod)
+            .build();
+    }
+
+    private static ClusterState stateWithNode() {
+        var node = new DiscoveryNode("node1-name", "node1", "eph-node1", "abc", "abc", null, Map.of(), Set.of(), null);
+        return ClusterState.builder(ClusterState.EMPTY_STATE).nodes(DiscoveryNodes.builder().add(node).build()).build();
+    }
+
+    private static ClusterState stateWithNode(SingleNodeShutdownMetadata existing) {
+        return ClusterState.builder(stateWithNode())
+            .metadata(
+                Metadata.builder().putCustom(NodesShutdownMetadata.TYPE, new NodesShutdownMetadata(Map.of(existing.getNodeId(), existing)))
+            )
+            .build();
+    }
+
+    /**
+     * Runs the cluster state update that {@link TransportPutShutdownNodeAction} would submit for the request, without a master service.
+     */
+    private ClusterState executePutShutdown(ClusterState state, PutShutdownNodeAction.Request request) throws Exception {
+        var taskExecutor = ArgumentCaptor.forClass(PutShutdownNodeExecutor.class);
+        verify(clusterService).createTaskQueue(any(), any(), taskExecutor.capture());
+        when(taskContext.getTask()).thenReturn(new PutShutdownNodeTask(request, ActionListener.noop()));
+        return taskExecutor.getValue()
+            .execute(new ClusterStateTaskExecutor.BatchExecutionContext<>(state, List.of(taskContext), () -> null));
     }
 }
