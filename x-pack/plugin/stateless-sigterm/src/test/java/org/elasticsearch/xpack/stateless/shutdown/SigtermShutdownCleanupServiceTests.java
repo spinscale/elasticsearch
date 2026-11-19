@@ -616,6 +616,103 @@ public class SigtermShutdownCleanupServiceTests extends ESTestCase {
         assertThat(schedule.nodeDelay.get(node(node3)), equalTo(computeDelay(now, node3Started, node3Grace)));
     }
 
+    public void testGracePeriodChangeReschedulesCleanup() {
+        var mocks = newMocks();
+        newMockTaskQueue(mocks.clusterService);
+        var firstCleanup = mock(Scheduler.ScheduledCancellable.class);
+        var secondCleanup = mock(Scheduler.ScheduledCancellable.class);
+        doReturn(firstCleanup, secondCleanup).when(mocks.threadPool)
+            .schedule(any(SubmitCleanupSigtermShutdown.class), any(TimeValue.class), any(Executor.class));
+
+        long shortGrace = 14 * 60 * 1_000;
+        long longGrace = 60 * 60 * 1_000;
+        long started = 10_000L;
+        long now = started + 60_000L;
+        when(mocks.threadPool.absoluteTimeInMillis()).thenReturn(now);
+
+        var master = createDiscoveryNode("node1");
+        var other = createDiscoveryNode("node2");
+        var otherNode = node(other);
+        var sigtermShutdownService = new SigtermShutdownCleanupService(mocks.clusterService, mocks.rerouteService);
+
+        // the shutdown is first seen with the short grace period
+        var shortGraceShutdowns = new NodesShutdownMetadata(Map.of(other.getId(), sigtermShutdown(other, shortGrace, started)));
+        sigtermShutdownService.clusterChanged(
+            new ClusterChangedEvent(
+                this.getTestName(),
+                createClusterState(shortGraceShutdowns, master, other),
+                createClusterState(shortGraceShutdowns, master, other)
+            )
+        );
+        var firstSchedule = verifySchedule(mocks.threadPool, 1);
+        assertThat(firstSchedule.nodeDelay.get(otherNode), equalTo(computeDelay(now, started, shortGrace)));
+        var firstEntry = sigtermShutdownService.cleanups.get(otherNode);
+
+        // the grace period is extended, the start time stays the same
+        var longGraceShutdowns = new NodesShutdownMetadata(Map.of(other.getId(), sigtermShutdown(other, longGrace, started)));
+        sigtermShutdownService.clusterChanged(
+            new ClusterChangedEvent(
+                this.getTestName(),
+                createClusterState(longGraceShutdowns, master, other),
+                createClusterState(shortGraceShutdowns, master, other)
+            )
+        );
+
+        Mockito.verify(firstCleanup, times(1)).cancel();
+        Mockito.verify(secondCleanup, times(0)).cancel();
+        var secondSchedule = verifySchedule(mocks.threadPool, 2);
+        assertThat(secondSchedule.delay.get(1), equalTo(computeDelay(now, started, longGrace)));
+        assertThat(secondSchedule.delay.get(1), greaterThan(secondSchedule.delay.get(0)));
+        assertThat(sigtermShutdownService.cleanups.values(), hasSize(1));
+        assertThat(sigtermShutdownService.cleanups, hasKey(otherNode));
+        assertThat(sigtermShutdownService.cleanups.get(otherNode), not(sameInstance(firstEntry)));
+        assertThat(
+            sigtermShutdownService.cleanups.get(otherNode),
+            not(sameInstance(SigtermShutdownCleanupService.PENDING_DELAYED_CLEANUP))
+        );
+        assertThat(sigtermShutdownService.cleanups.get(otherNode), not(sameInstance(SigtermShutdownCleanupService.IN_FLIGHT_CLEANUP)));
+
+        // the same grace period again does not reschedule
+        sigtermShutdownService.clusterChanged(
+            new ClusterChangedEvent(
+                this.getTestName(),
+                createClusterState(longGraceShutdowns, master, other),
+                createClusterState(longGraceShutdowns, master, other)
+            )
+        );
+        verifySchedule(mocks.threadPool, 2);
+        Mockito.verify(secondCleanup, times(0)).cancel();
+    }
+
+    public void testUnchangedGracePeriodDoesNotRescheduleCleanup() {
+        var mocks = newMocks();
+        newMockTaskQueue(mocks.clusterService);
+        var cleanup = mock(Scheduler.ScheduledCancellable.class);
+        doReturn(cleanup).when(mocks.threadPool)
+            .schedule(any(SubmitCleanupSigtermShutdown.class), any(TimeValue.class), any(Executor.class));
+
+        long grace = 14 * 60 * 1_000;
+        long started = 10_000L;
+        when(mocks.threadPool.absoluteTimeInMillis()).thenReturn(started + 60_000L);
+
+        var master = createDiscoveryNode("node1");
+        var other = createDiscoveryNode("node2");
+        var shutdowns = new NodesShutdownMetadata(Map.of(other.getId(), sigtermShutdown(other, grace, started)));
+        var clusterChanged = new ClusterChangedEvent(
+            this.getTestName(),
+            createClusterState(shutdowns, master, other),
+            createClusterState(shutdowns, master, other)
+        );
+        var sigtermShutdownService = new SigtermShutdownCleanupService(mocks.clusterService, mocks.rerouteService);
+
+        sigtermShutdownService.clusterChanged(clusterChanged);
+        sigtermShutdownService.clusterChanged(clusterChanged);
+
+        verifySchedule(mocks.threadPool, 1);
+        Mockito.verify(cleanup, times(0)).cancel();
+        assertThat(sigtermShutdownService.cleanups.values(), hasSize(1));
+    }
+
     public void testComputeDelay() {
         long now = 100_000;
         long grace = 1_000;

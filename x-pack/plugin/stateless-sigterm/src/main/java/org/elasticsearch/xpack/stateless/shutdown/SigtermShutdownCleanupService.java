@@ -68,6 +68,7 @@ public class SigtermShutdownCleanupService implements ClusterStateListener {
      * Schedule a {@link SubmitCleanupSigtermShutdown} action when there is a sigterm {@link SingleNodeShutdownMetadata} in the cluster
      * state.  Actions are scheduled based on the started time of the shutdown and the grace period.
      * See {@link #computeDelay(long, long, long)} for details in the calculation.  The action is rescheduled
+     * when the grace period of the shutdown changes, for example because it was extended.
      */
     @Override
     public void clusterChanged(ClusterChangedEvent event) {
@@ -110,7 +111,26 @@ public class SigtermShutdownCleanupService implements ClusterStateListener {
                 // The node still has the same ephemeral id, so we proceed with the normal cleanup after
                 // the grace period has expired.
 
-                final Scheduler.Cancellable cleanup = cleanups.get(node);
+                Scheduler.Cancellable cleanup = cleanups.get(node);
+                // The grace period of a shutdown can be extended after the cleanup was scheduled, in which case the scheduled cleanup would
+                // fire too early. Replace it with one that uses the new grace period.
+                if (cleanup instanceof ScheduledCleanup scheduledCleanup
+                    && scheduledCleanup.isCancelled() == false
+                    && scheduledCleanup.gracePeriodMillis() != shutdown.getGracePeriod().millis()) {
+                    logger.debug(
+                        "grace period of sigterm shutdown of node [{}] changed from [{}ms] to [{}], rescheduling cleanup",
+                        node,
+                        scheduledCleanup.gracePeriodMillis(),
+                        shutdown.getGracePeriod()
+                    );
+                    scheduledCleanup.cancel();
+                    // If the entry was concurrently replaced, for example by an in-flight cleanup, leave it alone.
+                    if (cleanups.remove(node, scheduledCleanup) == false) {
+                        continue;
+                    }
+                    cleanup = null;
+                }
+
                 // Skip nodes that already have an active delayed cleanup or an in-flight master task.
                 if (cleanup == PENDING_DELAYED_CLEANUP
                     || cleanup == IN_FLIGHT_CLEANUP
@@ -130,22 +150,27 @@ public class SigtermShutdownCleanupService implements ClusterStateListener {
                 if (cleanups.putIfAbsent(node, PENDING_DELAYED_CLEANUP) != null) {
                     continue;
                 }
-                final Scheduler.ScheduledCancellable scheduledCleanup;
+                final long gracePeriodMillis = shutdown.getGracePeriod().millis();
+                final Scheduler.ScheduledCancellable scheduledCancellable;
                 try {
-                    scheduledCleanup = threadPool.schedule(
+                    scheduledCancellable = threadPool.schedule(
                         new SubmitCleanupSigtermShutdown(
                             node,
                             cleanupNode -> submitCleanupTask("sigterm-grace-period-expired", cleanupNode)
                         ),
-                        computeDelay(now, shutdown.getStartedAtMillis(), shutdown.getGracePeriod().millis()),
+                        computeDelay(now, shutdown.getStartedAtMillis(), gracePeriodMillis),
                         executor
                     );
                 } catch (RuntimeException e) {
                     cleanups.remove(node, PENDING_DELAYED_CLEANUP);
                     throw e;
                 }
-                if (cleanups.replace(node, PENDING_DELAYED_CLEANUP, scheduledCleanup) == false) {
-                    scheduledCleanup.cancel();
+                if (cleanups.replace(
+                    node,
+                    PENDING_DELAYED_CLEANUP,
+                    new ScheduledCleanup(scheduledCancellable, gracePeriodMillis)
+                ) == false) {
+                    scheduledCancellable.cancel();
                 }
             }
         }
@@ -295,6 +320,34 @@ public class SigtermShutdownCleanupService implements ClusterStateListener {
                         .build()
                 )
                 .build();
+        }
+    }
+
+    /**
+     * A scheduled delayed cleanup together with the grace period its delay was computed from, so that the cleanup can be rescheduled
+     * when the grace period of the shutdown changes.
+     */
+    private static class ScheduledCleanup implements Scheduler.Cancellable {
+        private final Scheduler.Cancellable delegate;
+        private final long gracePeriodMillis;
+
+        ScheduledCleanup(Scheduler.Cancellable delegate, long gracePeriodMillis) {
+            this.delegate = delegate;
+            this.gracePeriodMillis = gracePeriodMillis;
+        }
+
+        long gracePeriodMillis() {
+            return gracePeriodMillis;
+        }
+
+        @Override
+        public boolean cancel() {
+            return delegate.cancel();
+        }
+
+        @Override
+        public boolean isCancelled() {
+            return delegate.isCancelled();
         }
     }
 
