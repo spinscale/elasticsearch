@@ -28,6 +28,7 @@ import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.concurrent.DeterministicTaskQueue;
 import org.elasticsearch.core.TimeValue;
+import org.elasticsearch.node.NodeClosedException;
 import org.elasticsearch.readiness.ReadinessRequest;
 import org.elasticsearch.readiness.ReadinessService;
 import org.elasticsearch.readiness.TransportReadinessAction;
@@ -50,13 +51,18 @@ import org.elasticsearch.xpack.shutdown.SingleNodeShutdownStatus;
 import org.junit.After;
 import org.junit.Before;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
@@ -66,6 +72,7 @@ import static org.elasticsearch.action.support.master.MasterNodeRequest.INFINITE
 import static org.elasticsearch.cluster.node.DiscoveryNodeRole.INDEX_ROLE;
 import static org.elasticsearch.cluster.node.DiscoveryNodeRole.ML_ROLE;
 import static org.elasticsearch.cluster.node.DiscoveryNodeRole.SEARCH_ROLE;
+import static org.elasticsearch.core.TimeValue.timeValueMillis;
 import static org.elasticsearch.core.TimeValue.timeValueSeconds;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
@@ -81,6 +88,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class SigtermTerminationHandlerTests extends ESTestCase {
+    private static final TimeValue SHORT_GRACE_PERIOD = TimeValue.timeValueMinutes(14);
+    private static final TimeValue MARKER_CHECK_DELAY = TimeValue.timeValueMinutes(1);
+
     ThreadPool threadPool;
 
     @Before
@@ -171,7 +181,10 @@ public class SigtermTerminationHandlerTests extends ESTestCase {
                 pollInterval,
                 timeout,
                 nodeId,
-                new SigtermShutdownMetrics(meterRegistry)
+                new SigtermShutdownMetrics(meterRegistry),
+                ShortShutdownMarker.disabled(),
+                SHORT_GRACE_PERIOD,
+                MARKER_CHECK_DELAY
             ).handleTermination();
 
             mockLog.assertAllExpectationsMatched();
@@ -207,7 +220,10 @@ public class SigtermTerminationHandlerTests extends ESTestCase {
             pollInterval,
             timeout,
             nodeId,
-            new SigtermShutdownMetrics(meterRegistry)
+            new SigtermShutdownMetrics(meterRegistry),
+            ShortShutdownMarker.disabled(),
+            SHORT_GRACE_PERIOD,
+            MARKER_CHECK_DELAY
         ).handleTermination();
 
         final List<Measurement> shutdownMeasurements = meterRegistry.getRecorder()
@@ -251,7 +267,10 @@ public class SigtermTerminationHandlerTests extends ESTestCase {
             pollInterval,
             timeout,
             nodeId,
-            new SigtermShutdownMetrics(meterRegistry)
+            new SigtermShutdownMetrics(meterRegistry),
+            ShortShutdownMarker.disabled(),
+            SHORT_GRACE_PERIOD,
+            MARKER_CHECK_DELAY
         ).handleTermination();
 
         final List<Measurement> migrationMeasurements = meterRegistry.getRecorder()
@@ -335,7 +354,10 @@ public class SigtermTerminationHandlerTests extends ESTestCase {
             pollInterval,
             timeout,
             nodeId,
-            new SigtermShutdownMetrics(meterRegistry)
+            new SigtermShutdownMetrics(meterRegistry),
+            ShortShutdownMarker.disabled(),
+            SHORT_GRACE_PERIOD,
+            MARKER_CHECK_DELAY
         );
 
         // handleTermination blocks on a latch while deferred polls are scheduled. Drive the queue from this thread.
@@ -425,7 +447,10 @@ public class SigtermTerminationHandlerTests extends ESTestCase {
                 pollInterval,
                 timeout,
                 nodeId,
-                new SigtermShutdownMetrics(meterRegistry)
+                new SigtermShutdownMetrics(meterRegistry),
+                ShortShutdownMarker.disabled(),
+                SHORT_GRACE_PERIOD,
+                MARKER_CHECK_DELAY
             ).handleTermination();
 
             assertShutdownAndMigrationMetrics(meterRegistry, SigtermTerminationHandler.ShutdownStatus.IN_PROGRESS, true, false);
@@ -435,6 +460,343 @@ public class SigtermTerminationHandlerTests extends ESTestCase {
             assertThat(shutdownMeasurements.getFirst().getDouble(), greaterThanOrEqualTo(timeout.millis() / 1000.0));
         } finally {
             testThreadPool.shutdownNow();
+        }
+    }
+
+    public void testGracePeriodIsTimeoutWithoutMarker() {
+        final var fixture = new HandlerFixture(ShortShutdownMarker.disabled(), HandlerFixture.SHORT_GRACE_PERIOD, null);
+        fixture.start();
+        fixture.advanceTimeBy(HandlerFixture.MARKER_CHECK_DELAY);
+        fixture.advanceTimeBy(HandlerFixture.MARKER_CHECK_DELAY);
+        fixture.completeShutdown();
+
+        assertThat(fixture.putRequests, hasSize(1));
+        assertThat(fixture.putRequests.getFirst().getGracePeriod(), equalTo(HandlerFixture.TIMEOUT));
+        fixture.assertShutdownStatus(SigtermTerminationHandler.ShutdownStatus.COMPLETE);
+    }
+
+    public void testShortGracePeriodNotShorterThanTimeoutIsNotUsed() throws IOException {
+        // the marker is enabled and does not exist, but the short grace period is no shorter than the timeout, so there is nothing to
+        // extend
+        final var markerFile = createTempDir().resolve("short-shutdown");
+        final var fixture = new HandlerFixture(enabledMarker(markerFile), HandlerFixture.TIMEOUT, null);
+        fixture.start();
+        fixture.advanceTimeBy(HandlerFixture.MARKER_CHECK_DELAY);
+        fixture.advanceTimeBy(HandlerFixture.MARKER_CHECK_DELAY);
+        fixture.completeShutdown();
+
+        assertThat(fixture.putRequests, hasSize(1));
+        assertThat(fixture.putRequests.getFirst().getGracePeriod(), equalTo(HandlerFixture.TIMEOUT));
+    }
+
+    @TestLogging(
+        reason = "Testing logging at INFO level",
+        value = "org.elasticsearch.xpack.stateless.shutdown.SigtermTerminationHandler:INFO"
+    )
+    public void testShortGracePeriodKeptWhenMarkerExistsAtSigterm() throws IOException {
+        final var markerFile = createTempDir().resolve("short-shutdown");
+        Files.createFile(markerFile);
+
+        try (var mockLog = MockLog.capture(SigtermTerminationHandler.class)) {
+            mockLog.addExpectation(
+                new MockLog.SeenEventExpectation(
+                    "marker found",
+                    SigtermTerminationHandler.class.getCanonicalName(),
+                    Level.INFO,
+                    "short shutdown marker [" + markerFile + "] found, keep grace period [" + HandlerFixture.SHORT_GRACE_PERIOD + "]"
+                )
+            );
+
+            final var fixture = new HandlerFixture(enabledMarker(markerFile), HandlerFixture.SHORT_GRACE_PERIOD, null);
+            fixture.start();
+            // the marker was found right away, so there is no check that could extend the grace period later
+            fixture.advanceTimeBy(HandlerFixture.MARKER_CHECK_DELAY);
+            fixture.advanceTimeBy(HandlerFixture.MARKER_CHECK_DELAY);
+            fixture.completeShutdown();
+
+            assertThat(fixture.putRequests, hasSize(1));
+            assertThat(fixture.putRequests.getFirst().getGracePeriod(), equalTo(HandlerFixture.SHORT_GRACE_PERIOD));
+            mockLog.assertAllExpectationsMatched();
+        }
+    }
+
+    @TestLogging(
+        reason = "Testing logging at INFO level",
+        value = "org.elasticsearch.xpack.stateless.shutdown.SigtermTerminationHandler:INFO"
+    )
+    public void testGracePeriodExtendedWhenMarkerIsMissingAfterCheckDelay() throws IOException {
+        final var markerFile = createTempDir().resolve("short-shutdown");
+
+        try (var mockLog = MockLog.capture(SigtermTerminationHandler.class)) {
+            mockLog.addExpectation(
+                new MockLog.SeenEventExpectation(
+                    "grace period extended",
+                    SigtermTerminationHandler.class.getCanonicalName(),
+                    Level.INFO,
+                    "extended shutdown grace period from [" + HandlerFixture.SHORT_GRACE_PERIOD + "] to [" + HandlerFixture.TIMEOUT + "]"
+                )
+            );
+
+            final var fixture = new HandlerFixture(enabledMarker(markerFile), HandlerFixture.SHORT_GRACE_PERIOD, null);
+            fixture.start();
+            assertThat(fixture.putRequests, hasSize(1));
+            assertThat(fixture.putRequests.getFirst().getGracePeriod(), equalTo(HandlerFixture.SHORT_GRACE_PERIOD));
+
+            // the grace period is not extended before the check delay has passed
+            fixture.advanceTimeBy(timeValueMillis(HandlerFixture.MARKER_CHECK_DELAY.millis() - 1));
+            assertThat(fixture.putRequests, hasSize(1));
+
+            fixture.advanceTimeBy(timeValueMillis(1));
+            assertThat(fixture.putRequests, hasSize(2));
+            final var first = fixture.putRequests.get(0);
+            final var second = fixture.putRequests.get(1);
+            assertThat(second.getGracePeriod(), equalTo(HandlerFixture.TIMEOUT));
+            assertThat(second.getType(), equalTo(first.getType()));
+            assertThat(second.getReason(), equalTo(first.getReason()));
+            assertThat(second.getNodeId(), equalTo(first.getNodeId()));
+
+            fixture.completeShutdown();
+            // the marker is only checked once
+            assertThat(fixture.putRequests, hasSize(2));
+            fixture.assertShutdownStatus(SigtermTerminationHandler.ShutdownStatus.COMPLETE);
+            mockLog.assertAllExpectationsMatched();
+        }
+    }
+
+    @TestLogging(
+        reason = "Testing logging at INFO level",
+        value = "org.elasticsearch.xpack.stateless.shutdown.SigtermTerminationHandler:INFO"
+    )
+    public void testShortGracePeriodKeptWhenMarkerAppearsBeforeCheck() throws IOException {
+        final var markerFile = createTempDir().resolve("short-shutdown");
+
+        try (var mockLog = MockLog.capture(SigtermTerminationHandler.class)) {
+            mockLog.addExpectation(
+                new MockLog.SeenEventExpectation(
+                    "marker found",
+                    SigtermTerminationHandler.class.getCanonicalName(),
+                    Level.INFO,
+                    "short shutdown marker [" + markerFile + "] found, keep grace period [" + HandlerFixture.SHORT_GRACE_PERIOD + "]"
+                )
+            );
+
+            final var fixture = new HandlerFixture(enabledMarker(markerFile), HandlerFixture.SHORT_GRACE_PERIOD, null);
+            fixture.start();
+            // the control plane writes the marker after the sigterm, but before the check
+            fixture.advanceTimeBy(timeValueMillis(HandlerFixture.MARKER_CHECK_DELAY.millis() / 2));
+            Files.createFile(markerFile);
+            fixture.advanceTimeBy(HandlerFixture.MARKER_CHECK_DELAY);
+            fixture.completeShutdown();
+
+            assertThat(fixture.putRequests, hasSize(1));
+            assertThat(fixture.putRequests.getFirst().getGracePeriod(), equalTo(HandlerFixture.SHORT_GRACE_PERIOD));
+            mockLog.assertAllExpectationsMatched();
+        }
+    }
+
+    public void testFailedExtensionDoesNotFailShutdown() throws IOException {
+        final var markerFile = createTempDir().resolve("short-shutdown");
+
+        try (var mockLog = MockLog.capture(SigtermTerminationHandler.class)) {
+            mockLog.addExpectation(
+                new MockLog.SeenEventExpectation(
+                    "extension failed",
+                    SigtermTerminationHandler.class.getCanonicalName(),
+                    Level.WARN,
+                    "failed to extend shutdown grace period from ["
+                        + HandlerFixture.SHORT_GRACE_PERIOD
+                        + "] to ["
+                        + HandlerFixture.TIMEOUT
+                        + "]"
+                )
+            );
+
+            final var fixture = new HandlerFixture(
+                enabledMarker(markerFile),
+                HandlerFixture.SHORT_GRACE_PERIOD,
+                new RuntimeException("extension failed")
+            );
+            fixture.start();
+            fixture.advanceTimeBy(HandlerFixture.MARKER_CHECK_DELAY);
+            fixture.advanceTimeBy(HandlerFixture.MARKER_CHECK_DELAY);
+            assertThat(fixture.putRequests, hasSize(2));
+
+            // the shutdown is still being handled, and it is not counted as failed
+            fixture.completeShutdown();
+            fixture.assertShutdownStatus(SigtermTerminationHandler.ShutdownStatus.COMPLETE);
+            mockLog.assertAllExpectationsMatched();
+        }
+    }
+
+    public void testFailedExtensionBecauseNodeIsClosingIsNotLoggedAsWarning() throws IOException {
+        final var markerFile = createTempDir().resolve("short-shutdown");
+
+        try (var mockLog = MockLog.capture(SigtermTerminationHandler.class)) {
+            mockLog.addExpectation(
+                new MockLog.UnseenEventExpectation(
+                    "no warning for closing node",
+                    SigtermTerminationHandler.class.getCanonicalName(),
+                    Level.WARN,
+                    "failed to extend shutdown grace period"
+                )
+            );
+
+            final var fixture = new HandlerFixture(
+                enabledMarker(markerFile),
+                HandlerFixture.SHORT_GRACE_PERIOD,
+                new NodeClosedException(DiscoveryNodeUtils.builder("node").build())
+            );
+            fixture.start();
+            fixture.advanceTimeBy(HandlerFixture.MARKER_CHECK_DELAY);
+            fixture.advanceTimeBy(HandlerFixture.MARKER_CHECK_DELAY);
+            assertThat(fixture.putRequests, hasSize(2));
+
+            fixture.completeShutdown();
+            fixture.assertShutdownStatus(SigtermTerminationHandler.ShutdownStatus.COMPLETE);
+            mockLog.assertAllExpectationsMatched();
+        }
+    }
+
+    public void testNoExtensionWhenShutdownCompletesBeforeCheck() throws IOException {
+        final var markerFile = createTempDir().resolve("short-shutdown");
+        final var fixture = new HandlerFixture(enabledMarker(markerFile), HandlerFixture.SHORT_GRACE_PERIOD, null);
+        fixture.start();
+        fixture.completeShutdown();
+        fixture.assertShutdownStatus(SigtermTerminationHandler.ShutdownStatus.COMPLETE);
+
+        // the check is not run after the shutdown completed, even when the time for it comes
+        fixture.taskQueue.runAllTasksInTimeOrder();
+        assertThat(fixture.putRequests, hasSize(1));
+        assertThat(fixture.putRequests.getFirst().getGracePeriod(), equalTo(HandlerFixture.SHORT_GRACE_PERIOD));
+    }
+
+    private static ShortShutdownMarker enabledMarker(Path markerFile) {
+        return ShortShutdownMarker.fromSettings(
+            Settings.builder().put(StatelessSigtermPlugin.SHORT_SHUTDOWN_MARKER_FILE_SETTING.getKey(), markerFile.toString()).build(),
+            markerFile.getParent()
+        );
+    }
+
+    /**
+     * Runs {@link SigtermTerminationHandler#handleTermination()} on its own thread against a mocked client. Time is controlled by a
+     * {@link DeterministicTaskQueue}, so a test decides when the status polls and the marker check run. Only the test thread touches the
+     * task queue after {@link #start()}, until the handler thread is joined in {@link #completeShutdown()}.
+     */
+    private final class HandlerFixture {
+        static final TimeValue POLL_INTERVAL = timeValueMillis(25);
+        // The handler waits for this long in real time if the shutdown does not complete, so it only needs to be longer than a test.
+        static final TimeValue TIMEOUT = timeValueSeconds(10);
+        static final TimeValue SHORT_GRACE_PERIOD = timeValueSeconds(5);
+        static final TimeValue MARKER_CHECK_DELAY = timeValueMillis(100);
+
+        final DeterministicTaskQueue taskQueue = new DeterministicTaskQueue(new Random(random().nextLong()));
+        final List<PutShutdownNodeAction.Request> putRequests = new CopyOnWriteArrayList<>();
+        final RecordingMeterRegistry meterRegistry = new RecordingMeterRegistry();
+        private final AtomicBoolean shutdownComplete = new AtomicBoolean(false);
+        private final CountDownLatch firstPutDone = new CountDownLatch(1);
+        private final Thread handlerThread;
+
+        /**
+         * @param laterPutFailure how every Put Shutdown request after the first one fails, or {@code null} if they succeed
+         */
+        HandlerFixture(ShortShutdownMarker marker, TimeValue shortGracePeriod, Exception laterPutFailure) {
+            taskQueue.setExecutionDelayVariabilityMillis(0);
+            final var fixtureThreadPool = taskQueue.getThreadPool();
+            final String nodeId = randomAlphaOfLength(10);
+
+            final var client = mock(Client.class);
+            when(client.threadPool()).thenReturn(fixtureThreadPool);
+            doAnswer(invocation -> {
+                putRequests.add(invocation.getArgument(1, PutShutdownNodeAction.Request.class));
+                ActionListener<AcknowledgedResponse> listener = invocation.getArgument(2);
+                if (putRequests.size() > 1 && laterPutFailure != null) {
+                    listener.onFailure(laterPutFailure);
+                } else {
+                    listener.onResponse(AcknowledgedResponse.TRUE);
+                }
+                // The listener of the first request starts the status polling and schedules the marker check, so all of that is done here.
+                firstPutDone.countDown();
+                return null;
+            }).when(client).execute(eq(PutShutdownNodeAction.INSTANCE), any(), any());
+            doAnswer(invocation -> {
+                final var migrationStatus = shutdownComplete.get()
+                    ? SingleNodeShutdownMetadata.Status.COMPLETE
+                    : SingleNodeShutdownMetadata.Status.IN_PROGRESS;
+                ActionListener<GetShutdownStatusAction.Response> listener = invocation.getArgument(2);
+                listener.onResponse(
+                    new GetShutdownStatusAction.Response(
+                        Collections.singletonList(
+                            new SingleNodeShutdownStatus(
+                                SingleNodeShutdownMetadata.builder()
+                                    .setNodeId(nodeId)
+                                    .setNodeEphemeralId(nodeId)
+                                    .setType(SingleNodeShutdownMetadata.Type.SIGTERM)
+                                    .setReason(getTestName())
+                                    .setStartedAtMillis(randomNonNegativeLong())
+                                    .setGracePeriod(TIMEOUT)
+                                    .build(),
+                                new ShutdownShardMigrationStatus(migrationStatus, 0, 0, 0),
+                                ShutdownPersistentTasksStatus.fromRemainingTasks(0, 0),
+                                new ShutdownPluginsStatus(true),
+                                ShutdownShardSnapshotsStatus.fromShardCounts(0, 0, 0)
+                            )
+                        )
+                    )
+                );
+                return null;
+            }).when(client).execute(eq(GetShutdownStatusAction.INSTANCE), any(), any());
+
+            final var handler = new SigtermTerminationHandler(
+                client,
+                fixtureThreadPool,
+                null,
+                null,
+                POLL_INTERVAL,
+                TIMEOUT,
+                nodeId,
+                new SigtermShutdownMetrics(meterRegistry),
+                marker,
+                shortGracePeriod,
+                MARKER_CHECK_DELAY
+            );
+            handlerThread = new Thread(handler::handleTermination, "sigterm-handler");
+            handlerThread.setDaemon(true);
+        }
+
+        /**
+         * Starts handling the sigterm and returns once the first Put Shutdown request is answered and the polling and the marker check
+         * are set up.
+         */
+        void start() {
+            handlerThread.start();
+            safeAwait(firstPutDone);
+        }
+
+        /**
+         * Moves the simulated time forward and runs everything that is due, which are status polls and the marker check.
+         * Tests keep the total below ten polls ({@link #POLL_INTERVAL}), as the handler dumps hot threads from the tenth poll on.
+         */
+        void advanceTimeBy(TimeValue duration) {
+            taskQueue.runTasksUpToTimeInOrder(taskQueue.getCurrentTimeMillis() + duration.millis());
+        }
+
+        /**
+         * Makes the next status poll report a complete shutdown and waits for the handler to return.
+         */
+        void completeShutdown() {
+            shutdownComplete.set(true);
+            advanceTimeBy(POLL_INTERVAL);
+            safeJoin(handlerThread);
+        }
+
+        void assertShutdownStatus(SigtermTerminationHandler.ShutdownStatus expected) {
+            final List<Measurement> shutdownMeasurements = meterRegistry.getRecorder()
+                .getMeasurements(InstrumentType.DOUBLE_HISTOGRAM, SigtermShutdownMetrics.SHUTDOWN_DURATION_HISTOGRAM);
+            assertThat(shutdownMeasurements, hasSize(1));
+            assertThat(
+                shutdownMeasurements.getFirst().attributes().get(SigtermShutdownMetrics.ATTRIBUTE_NAME_STATUS),
+                equalTo(expected.name().toLowerCase(Locale.ROOT))
+            );
         }
     }
 
@@ -657,7 +1019,10 @@ public class SigtermTerminationHandlerTests extends ESTestCase {
             timeValueSeconds(1),
             null,
             "local-node",
-            SigtermShutdownMetrics.NOOP
+            SigtermShutdownMetrics.NOOP,
+            ShortShutdownMarker.disabled(),
+            SHORT_GRACE_PERIOD,
+            MARKER_CHECK_DELAY
         );
         handler.blockTermination();
     }
@@ -755,7 +1120,10 @@ public class SigtermTerminationHandlerTests extends ESTestCase {
                 pollInterval,
                 timeout,
                 nodeId,
-                new SigtermShutdownMetrics(meterRegistry)
+                new SigtermShutdownMetrics(meterRegistry),
+                ShortShutdownMarker.disabled(),
+                SHORT_GRACE_PERIOD,
+                MARKER_CHECK_DELAY
             );
             handler.handleTermination();
 

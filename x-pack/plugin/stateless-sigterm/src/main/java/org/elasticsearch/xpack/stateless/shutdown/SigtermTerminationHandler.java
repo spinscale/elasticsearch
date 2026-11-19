@@ -31,6 +31,7 @@ import org.elasticsearch.node.internal.TerminationHandler;
 import org.elasticsearch.readiness.ReadinessRequest;
 import org.elasticsearch.readiness.ReadinessService;
 import org.elasticsearch.readiness.TransportReadinessAction;
+import org.elasticsearch.threadpool.Scheduler;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.RemoteTransportClient;
 import org.elasticsearch.transport.TransportException;
@@ -56,11 +57,17 @@ import java.util.stream.Stream;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
 import static org.elasticsearch.action.support.master.MasterNodeRequest.INFINITE_MASTER_NODE_TIMEOUT;
+import static org.elasticsearch.core.Strings.format;
 import static org.elasticsearch.core.TimeValue.timeValueMillis;
 
 /**
  * This class actually implements the logic that's invoked when Elasticsearch receives a sigterm - that is, issuing a Put Shutdown request
  * for this node and periodically checking the Get Shutdown Status API for this node until it's done.
+ * <p>
+ * If a {@link ShortShutdownMarker} is enabled, the grace period of the first Put Shutdown request is the short grace period, because a
+ * short shutdown is the case that must not be missed. The control plane writes the marker file when the shutdown is short, but there is no
+ * fixed order between the sigterm and the file. When the file does not exist after a delay, the shutdown is assumed to be long and a second
+ * Put Shutdown request extends the grace period to the timeout.
  */
 public class SigtermTerminationHandler implements TerminationHandler {
     private static final Logger logger = LogManager.getLogger(SigtermTerminationHandler.class);
@@ -76,6 +83,9 @@ public class SigtermTerminationHandler implements TerminationHandler {
     private final TimeValue timeout;
     private final String nodeId;
     private final SigtermShutdownMetrics metrics;
+    private final ShortShutdownMarker marker;
+    private final TimeValue shortGracePeriod;
+    private final TimeValue markerCheckDelay;
 
     public SigtermTerminationHandler(
         Client client,
@@ -85,7 +95,10 @@ public class SigtermTerminationHandler implements TerminationHandler {
         TimeValue pollInterval,
         TimeValue timeout,
         String nodeId,
-        SigtermShutdownMetrics metrics
+        SigtermShutdownMetrics metrics,
+        ShortShutdownMarker marker,
+        TimeValue shortGracePeriod,
+        TimeValue markerCheckDelay
     ) {
         this.client = new OriginSettingClient(client, ClientHelper.STACK_ORIGIN);
         this.threadPool = threadPool;
@@ -95,6 +108,9 @@ public class SigtermTerminationHandler implements TerminationHandler {
         this.timeout = timeout;
         this.nodeId = nodeId;
         this.metrics = metrics;
+        this.marker = marker;
+        this.shortGracePeriod = shortGracePeriod;
+        this.markerCheckDelay = markerCheckDelay;
     }
 
     @Override
@@ -106,10 +122,22 @@ public class SigtermTerminationHandler implements TerminationHandler {
         AtomicBoolean failed = new AtomicBoolean(false);
         AtomicLong migrationStartMillis = new AtomicLong(UNSET);
         AtomicLong migrationCompleteMillis = new AtomicLong(UNSET);
+        AtomicReference<Scheduler.ScheduledCancellable> markerCheck = new AtomicReference<>();
 
-        client.execute(PutShutdownNodeAction.INSTANCE, shutdownRequest(), ActionListener.wrap(res -> {
+        // Without a marker, or if a short grace period would not be shorter than the timeout, there is nothing to extend.
+        final boolean startShort = marker.enabled() && shortGracePeriod.compareTo(timeout) < 0;
+        final TimeValue initialGracePeriod = startShort ? shortGracePeriod : timeout;
+
+        client.execute(PutShutdownNodeAction.INSTANCE, shutdownRequest(initialGracePeriod), ActionListener.wrap(res -> {
             migrationStartMillis.set(threadPool.rawRelativeTimeInMillis());
             pollStatusAndLoop(0, latch, lastStatus, migrationCompleteMillis);
+            if (startShort) {
+                if (markerExists()) {
+                    logger.info("short shutdown marker [{}] found, keep grace period [{}]", marker, shortGracePeriod);
+                } else {
+                    scheduleMarkerCheck(latch, markerCheck);
+                }
+            }
         }, ex -> {
             logger.warn("failed to register graceful shutdown request, stopping immediately", ex);
             failed.set(true);
@@ -162,6 +190,63 @@ public class SigtermTerminationHandler implements TerminationHandler {
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
             throw new RuntimeException(ex);
+        } finally {
+            cancelMarkerCheck(markerCheck);
+        }
+    }
+
+    /**
+     * Checks for the marker file once after {@link #markerCheckDelay}. The marker may be written after the sigterm arrived.
+     */
+    private void scheduleMarkerCheck(CountDownLatch latch, AtomicReference<Scheduler.ScheduledCancellable> markerCheck) {
+        markerCheck.set(threadPool.schedule(() -> maybeExtendGracePeriod(latch), markerCheckDelay, threadPool.generic()));
+        // The shutdown may have completed before the check was stored, in which case handleTermination did not see it to cancel it.
+        if (latch.getCount() == 0) {
+            cancelMarkerCheck(markerCheck);
+        }
+    }
+
+    private static void cancelMarkerCheck(AtomicReference<Scheduler.ScheduledCancellable> markerCheck) {
+        final Scheduler.ScheduledCancellable check = markerCheck.getAndSet(null);
+        if (check != null) {
+            check.cancel();
+        }
+    }
+
+    /**
+     * Extends the grace period to the timeout, unless the shutdown is already complete or the marker file exists. A failure here does not
+     * fail the shutdown, as the node still shuts down within the short grace period it already has.
+     */
+    private void maybeExtendGracePeriod(CountDownLatch latch) {
+        if (latch.getCount() == 0) {
+            return;
+        }
+        if (markerExists()) {
+            logger.info("short shutdown marker [{}] found, keep grace period [{}]", marker, shortGracePeriod);
+            return;
+        }
+        client.execute(PutShutdownNodeAction.INSTANCE, shutdownRequest(timeout), ActionListener.wrap(res -> {
+            logger.info("extended shutdown grace period from [{}] to [{}]", shortGracePeriod, timeout);
+        }, ex -> {
+            // if the node closes while the request is in flight, the shutdown is over and the failure is expected
+            if (ex instanceof NodeClosedException) {
+                logger.debug("failed to extend shutdown grace period, node is closing", ex);
+            } else {
+                logger.warn(() -> format("failed to extend shutdown grace period from [%s] to [%s]", shortGracePeriod, timeout), ex);
+            }
+        }));
+    }
+
+    /**
+     * A marker that cannot be read is treated as missing. The shutdown then has the long grace period, which is what happens without a
+     * marker, and the failure must not abort the handling of the sigterm.
+     */
+    private boolean markerExists() {
+        try {
+            return marker.exists();
+        } catch (RuntimeException e) {
+            logger.warn(() -> format("failed to check for short shutdown marker [%s]", marker), e);
+            return false;
         }
     }
 
@@ -433,7 +518,7 @@ public class SigtermTerminationHandler implements TerminationHandler {
         }, releasable));
     }
 
-    private PutShutdownNodeAction.Request shutdownRequest() {
+    private PutShutdownNodeAction.Request shutdownRequest(TimeValue gracePeriod) {
         PutShutdownNodeAction.Request request = new PutShutdownNodeAction.Request(
             timeout,
             timeout,
@@ -442,7 +527,7 @@ public class SigtermTerminationHandler implements TerminationHandler {
             "node sigterm",
             null,
             null,
-            timeout
+            gracePeriod
         );
         assert request.validate() == null;
         return request;

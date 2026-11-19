@@ -94,7 +94,10 @@ public class StatelessSigtermPlugin extends ShutdownPlugin {
             POLL_INTERVAL_SETTING.get(clusterService.getSettings()),
             TIMEOUT_SETTING.get(clusterService.getSettings()),
             services.nodeEnvironment().nodeId(),
-            new SigtermShutdownMetrics(services.telemetryProvider().getMeterRegistry())
+            new SigtermShutdownMetrics(services.telemetryProvider().getMeterRegistry()),
+            ShortShutdownMarker.fromSettings(clusterService.getSettings(), services.environment().configDir()),
+            SHORT_GRACE_PERIOD_SETTING.get(clusterService.getSettings()),
+            SHORT_SHUTDOWN_MARKER_CHECK_DELAY_SETTING.get(clusterService.getSettings())
         );
 
         NodeSeenService nodeSeenService = new NodeSeenService(clusterService);
