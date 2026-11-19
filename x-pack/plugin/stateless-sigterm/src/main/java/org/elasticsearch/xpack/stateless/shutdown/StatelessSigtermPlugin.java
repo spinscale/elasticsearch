@@ -48,6 +48,40 @@ public class StatelessSigtermPlugin extends ShutdownPlugin {
         Setting.Property.NodeScope
     );
 
+    /**
+     * Path of the marker file that the control plane writes when the shutdown of this node is short, for example during cloud provider
+     * maintenance. Only the existence of the file is relevant, its content is ignored. A relative path is resolved against the config
+     * directory. When empty, the feature is off and the grace period is always {@link #TIMEOUT_SETTING}.
+     */
+    public static final Setting<String> SHORT_SHUTDOWN_MARKER_FILE_SETTING = Setting.simpleString(
+        "stateless.sigterm.short_shutdown_marker_file",
+        "",
+        Setting.Property.NodeScope
+    );
+
+    /**
+     * The grace period of a short shutdown, which is the time before the platform kills the pod. Keep this equal to
+     * {@code SharedBlobCacheWarmingService.SEARCH_RECOVERY_WARMING_GRACE_PERIOD_CAP_SETTING}, as the warming deadline uses the smaller of
+     * the grace period and that cap.
+     */
+    public static final Setting<TimeValue> SHORT_GRACE_PERIOD_SETTING = Setting.timeSetting(
+        "stateless.sigterm.short_grace_period",
+        new TimeValue(14, TimeUnit.MINUTES),
+        TimeValue.ZERO,
+        Setting.Property.NodeScope
+    );
+
+    /**
+     * How long to wait after the SIGTERM before checking whether the short shutdown marker file exists. The grace period is extended to
+     * {@link #TIMEOUT_SETTING} when it does not exist by then.
+     */
+    public static final Setting<TimeValue> SHORT_SHUTDOWN_MARKER_CHECK_DELAY_SETTING = Setting.timeSetting(
+        "stateless.sigterm.short_shutdown_marker_check_delay",
+        new TimeValue(1, TimeUnit.MINUTES),
+        TimeValue.ZERO,
+        Setting.Property.NodeScope
+    );
+
     @Override
     public Collection<?> createComponents(PluginServices services) {
         ClusterService clusterService = services.clusterService();
@@ -82,7 +116,13 @@ public class StatelessSigtermPlugin extends ShutdownPlugin {
 
     @Override
     public List<Setting<?>> getSettings() {
-        return List.of(TIMEOUT_SETTING, POLL_INTERVAL_SETTING);
+        return List.of(
+            TIMEOUT_SETTING,
+            POLL_INTERVAL_SETTING,
+            SHORT_SHUTDOWN_MARKER_FILE_SETTING,
+            SHORT_GRACE_PERIOD_SETTING,
+            SHORT_SHUTDOWN_MARKER_CHECK_DELAY_SETTING
+        );
     }
 
     TerminationHandler getTerminationHandler() {

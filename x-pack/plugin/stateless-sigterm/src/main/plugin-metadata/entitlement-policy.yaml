@@ -1,0 +1,5 @@
+org.elasticsearch.xpack.stateless.sigterm:
+  - files:
+      - path_setting: stateless.sigterm.short_shutdown_marker_file
+        basedir_if_relative: config
+        mode: read
