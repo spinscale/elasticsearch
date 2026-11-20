@@ -21,14 +21,14 @@ import java.nio.file.Path;
  * Instead, the control plane writes the marker file when the shutdown is short. Only the existence of the file is relevant, its content is
  * ignored. There is no fixed order between the SIGTERM and the creation of the file, so callers have to check for the file more than once.
  */
-final class ShortShutdownMarker {
+class ShortShutdownMarker {
 
     private static final ShortShutdownMarker DISABLED = new ShortShutdownMarker(null);
 
     @Nullable
     private final Path path;
 
-    private ShortShutdownMarker(@Nullable Path path) {
+    ShortShutdownMarker(@Nullable Path path) {
         this.path = path;
     }
 
@@ -61,7 +61,7 @@ final class ShortShutdownMarker {
      * @return whether the marker is enabled and its file exists right now
      */
     boolean exists() {
-        return enabled() && Files.exists(path);
+        return enabled() && Files.isRegularFile(path);
     }
 
     @Override

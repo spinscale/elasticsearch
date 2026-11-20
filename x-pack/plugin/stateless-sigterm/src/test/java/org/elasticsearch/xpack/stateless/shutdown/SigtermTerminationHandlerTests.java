@@ -657,6 +657,56 @@ public class SigtermTerminationHandlerTests extends ESTestCase {
         }
     }
 
+    /**
+     * A marker that cannot be read is treated as missing, so the grace period is extended. Failing to read the marker must not abort the
+     * handling of the sigterm, which would leave the node with the short grace period and no extension.
+     */
+    @TestLogging(
+        reason = "Testing logging at WARN and INFO level",
+        value = "org.elasticsearch.xpack.stateless.shutdown.SigtermTerminationHandler:INFO"
+    )
+    public void testUnreadableMarkerIsTreatedAsMissing() throws IOException {
+        final var markerFile = createTempDir().resolve("short-shutdown");
+        final var unreadableMarker = new ShortShutdownMarker(markerFile) {
+            @Override
+            boolean exists() {
+                throw new RuntimeException("failed to check the marker");
+            }
+        };
+
+        try (var mockLog = MockLog.capture(SigtermTerminationHandler.class)) {
+            mockLog.addExpectation(
+                new MockLog.SeenEventExpectation(
+                    "marker could not be checked",
+                    SigtermTerminationHandler.class.getCanonicalName(),
+                    Level.WARN,
+                    "failed to check for short shutdown marker [" + markerFile + "]"
+                )
+            );
+            mockLog.addExpectation(
+                new MockLog.SeenEventExpectation(
+                    "grace period extended",
+                    SigtermTerminationHandler.class.getCanonicalName(),
+                    Level.INFO,
+                    "extended shutdown grace period from [" + HandlerFixture.SHORT_GRACE_PERIOD + "] to [" + HandlerFixture.TIMEOUT + "]"
+                )
+            );
+
+            final var fixture = new HandlerFixture(unreadableMarker, HandlerFixture.SHORT_GRACE_PERIOD, null);
+            fixture.start();
+            fixture.advanceTimeBy(HandlerFixture.MARKER_CHECK_DELAY);
+            fixture.advanceTimeBy(HandlerFixture.MARKER_CHECK_DELAY);
+
+            assertThat(fixture.putRequests, hasSize(2));
+            assertThat(fixture.putRequests.getFirst().getGracePeriod(), equalTo(HandlerFixture.SHORT_GRACE_PERIOD));
+            assertThat(fixture.putRequests.get(1).getGracePeriod(), equalTo(HandlerFixture.TIMEOUT));
+
+            fixture.completeShutdown();
+            fixture.assertShutdownStatus(SigtermTerminationHandler.ShutdownStatus.COMPLETE);
+            mockLog.assertAllExpectationsMatched();
+        }
+    }
+
     public void testNoExtensionWhenShutdownCompletesBeforeCheck() throws IOException {
         final var markerFile = createTempDir().resolve("short-shutdown");
         final var fixture = new HandlerFixture(enabledMarker(markerFile), HandlerFixture.SHORT_GRACE_PERIOD, null);

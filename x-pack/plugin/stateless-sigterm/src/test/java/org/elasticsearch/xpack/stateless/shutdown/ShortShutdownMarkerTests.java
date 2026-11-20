@@ -8,6 +8,7 @@
 package org.elasticsearch.xpack.stateless.shutdown;
 
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.core.IOUtils;
 import org.elasticsearch.test.ESTestCase;
 
 import java.io.IOException;
@@ -64,6 +65,42 @@ public class ShortShutdownMarkerTests extends ESTestCase {
         // the marker checks the file system on each call, so removing the file is visible
         Files.delete(markerFile);
         assertFalse(marker.exists());
+    }
+
+    public void testDirectoryAtMarkerPathIsNotAMarker() throws IOException {
+        var configDir = createTempDir();
+        var markerPath = createTempDir().resolve("short-shutdown");
+        Files.createDirectory(markerPath);
+        var marker = ShortShutdownMarker.fromSettings(markerSettings(markerPath.toString()), configDir);
+        assertTrue(marker.enabled());
+        assertFalse(marker.exists());
+    }
+
+    public void testFileAppearingLaterIsPickedUp() throws IOException {
+        var configDir = createTempDir();
+        var markerPath = createTempDir().resolve("short-shutdown");
+        var marker = ShortShutdownMarker.fromSettings(markerSettings(markerPath.toString()), configDir);
+        assertFalse(marker.exists());
+
+        Files.createFile(markerPath);
+        assertTrue(marker.exists());
+    }
+
+    public void testSymbolicLinkToFileIsAMarker() throws IOException {
+        // symlinks on Windows need admin privileges
+        assumeTrue("symlinks are not available", IOUtils.WINDOWS == false);
+
+        var configDir = createTempDir();
+        var markerFile = createTempDir().resolve("short-shutdown");
+        var link = createTempDir().resolve("marker-link");
+        var marker = ShortShutdownMarker.fromSettings(markerSettings(link.toString()), configDir);
+        assertFalse(marker.exists());
+
+        // the control plane may mount the marker and point the setting at a link to it
+        Files.createFile(markerFile);
+        Files.createSymbolicLink(link, markerFile);
+
+        assertTrue(marker.exists());
     }
 
     public void testRelativePathIsResolvedAgainstConfigDir() throws IOException {

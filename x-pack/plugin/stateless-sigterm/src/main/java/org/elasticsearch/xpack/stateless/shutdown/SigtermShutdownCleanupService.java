@@ -327,19 +327,7 @@ public class SigtermShutdownCleanupService implements ClusterStateListener {
      * A scheduled delayed cleanup together with the grace period its delay was computed from, so that the cleanup can be rescheduled
      * when the grace period of the shutdown changes.
      */
-    private static class ScheduledCleanup implements Scheduler.Cancellable {
-        private final Scheduler.Cancellable delegate;
-        private final long gracePeriodMillis;
-
-        ScheduledCleanup(Scheduler.Cancellable delegate, long gracePeriodMillis) {
-            this.delegate = delegate;
-            this.gracePeriodMillis = gracePeriodMillis;
-        }
-
-        long gracePeriodMillis() {
-            return gracePeriodMillis;
-        }
-
+    private record ScheduledCleanup(Scheduler.Cancellable delegate, long gracePeriodMillis) implements Scheduler.Cancellable {
         @Override
         public boolean cancel() {
             return delegate.cancel();
