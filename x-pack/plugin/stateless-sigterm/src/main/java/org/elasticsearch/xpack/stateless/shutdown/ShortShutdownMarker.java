@@ -18,8 +18,7 @@ import java.nio.file.Path;
  * <p>
  * The platform kills the pod after about 15 minutes in some cases, for example during cloud provider maintenance, so waiting for the long
  * grace period of {@link StatelessSigtermPlugin#TIMEOUT_SETTING} would be pointless. A SIGTERM does not tell the node which case it is in.
- * Instead, the control plane writes the marker file when the shutdown is short. Only the existence of the file is relevant, its content is
- * ignored. There is no fixed order between the SIGTERM and the creation of the file, so callers have to check for the file more than once.
+ * There is no fixed order between the SIGTERM and the creation of the file, so callers have to check for the file more than once.
  */
 class ShortShutdownMarker {
 
@@ -32,9 +31,6 @@ class ShortShutdownMarker {
         this.path = path;
     }
 
-    /**
-     * @return a marker that is off and never exists
-     */
     static ShortShutdownMarker disabled() {
         return DISABLED;
     }
@@ -42,8 +38,6 @@ class ShortShutdownMarker {
     /**
      * Reads {@link StatelessSigtermPlugin#SHORT_SHUTDOWN_MARKER_FILE_SETTING}. A relative path is resolved against {@code configDir}, which
      * agrees with {@code basedir_if_relative: config} in the entitlement policy of this plugin.
-     *
-     * @return a disabled marker if the setting is empty
      */
     static ShortShutdownMarker fromSettings(Settings settings, Path configDir) {
         final String value = StatelessSigtermPlugin.SHORT_SHUTDOWN_MARKER_FILE_SETTING.get(settings);

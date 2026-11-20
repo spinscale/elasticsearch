@@ -28,17 +28,14 @@ import static org.hamcrest.Matchers.instanceOf;
  * Base class for tests of the grace period of a SIGTERM shutdown when a short shutdown marker file is configured.
  * <p>
  * The marker file is in a temporary folder, which is outside the config directory of the nodes. A node can only read it because of the
- * files entitlement of the stateless-sigterm module, so these tests also cover that entitlement. Without the entitlement, {@code
- * Files.exists} does not throw, it returns {@code false}, so the marker file looks missing and the grace period is extended.
+ * files entitlement of the stateless-sigterm module, so these tests also cover that entitlement: without it {@code Files.isRegularFile}
+ * returns {@code false} rather than throwing, so the marker looks missing and the grace period is extended.
  * <p>
- * The search node is the node that is stopped. It holds the only search copy of the shards of an index, which cannot move to another search
- * node, so the shutdown stays in progress until it times out. That keeps the shutdown record visible for the whole test.
+ * The search node holds the only search copy of the shards of an index, so its shutdown stays in progress and the shutdown record stays
+ * visible for the whole test.
  */
 abstract class AbstractSigtermGracePeriodTestCase extends ESRestTestCase {
 
-    /**
-     * The grace period of a long shutdown.
-     */
     static final TimeValue SIGTERM_TIMEOUT = TimeValue.timeValueSeconds(30);
     static final TimeValue SHORT_GRACE_PERIOD = TimeValue.timeValueSeconds(5);
     static final TimeValue MARKER_CHECK_DELAY = TimeValue.timeValueSeconds(1);
@@ -89,17 +86,14 @@ abstract class AbstractSigtermGracePeriodTestCase extends ESRestTestCase {
         return (String) nodeId;
     }
 
-    /**
-     * Creates an index and waits for it to be green, which puts a shard on the search node.
-     */
     void createIndexWithShardOnSearchNode() throws IOException {
         createIndex(adminClient(), INDEX_NAME, Settings.EMPTY);
         ensureGreen(adminClient(), INDEX_NAME);
     }
 
     /**
-     * Sends a SIGTERM to the search node. Stopping the node blocks until it exits, which takes until it is forcibly killed here as its
-     * shutdown does not complete, so this runs on another thread to let the test look at the shutdown meanwhile.
+     * Stopping the node blocks until it exits, which never happens here as the shutdown does not complete, so this runs on another thread
+     * to let the test observe the shutdown meanwhile.
      */
     Thread stopSearchNodeInBackground() {
         var thread = new Thread(() -> cluster().stopNode(SEARCH_NODE_INDEX, false), "stop-search-node");

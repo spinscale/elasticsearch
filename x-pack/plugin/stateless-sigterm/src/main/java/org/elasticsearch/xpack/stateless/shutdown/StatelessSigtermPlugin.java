@@ -49,9 +49,8 @@ public class StatelessSigtermPlugin extends ShutdownPlugin {
     );
 
     /**
-     * Path of the marker file that the control plane writes when the shutdown of this node is short, for example during cloud provider
-     * maintenance. Only the existence of the file is relevant, its content is ignored. A relative path is resolved against the config
-     * directory. When empty, the feature is off and the grace period is always {@link #TIMEOUT_SETTING}.
+     * Path of the short shutdown marker file. A relative path is resolved against the config directory. When empty, the feature is off and
+     * the grace period is always {@link #TIMEOUT_SETTING}.
      */
     public static final Setting<String> SHORT_SHUTDOWN_MARKER_FILE_SETTING = Setting.simpleString(
         "stateless.sigterm.short_shutdown_marker_file",
@@ -60,7 +59,7 @@ public class StatelessSigtermPlugin extends ShutdownPlugin {
     );
 
     /**
-     * The grace period of a short shutdown, which is the time before the platform kills the pod. Keep this equal to
+     * The time before the platform kills the pod during a short shutdown. Keep this equal to
      * {@code SharedBlobCacheWarmingService.SEARCH_RECOVERY_WARMING_GRACE_PERIOD_CAP_SETTING}, as the warming deadline uses the smaller of
      * the grace period and that cap.
      */

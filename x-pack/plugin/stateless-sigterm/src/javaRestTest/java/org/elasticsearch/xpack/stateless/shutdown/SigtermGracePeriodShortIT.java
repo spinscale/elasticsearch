@@ -49,8 +49,8 @@ public class SigtermGracePeriodShortIT extends AbstractSigtermGracePeriodTestCas
                 assertThat(record.gracePeriod(), equalTo(SHORT_GRACE_PERIOD.getStringRep()));
             }, SHORT_GRACE_PERIOD.getSeconds() + 5, TimeUnit.SECONDS);
 
-            // The check for the marker file is due after the check delay, so the grace period would be extended by now if it were going to
-            // be. The shutdown record is still there at this point, as the node does not leave the cluster until its shutdown completes.
+            // the check for the marker file is due after the check delay, so by now the grace period would have been extended if it were
+            // going to be
             var startedAtMillis = shutdownRecord(nodeId).startedAtMillis();
             long deadline = System.nanoTime() + 3 * MARKER_CHECK_DELAY.nanos();
             while (System.nanoTime() < deadline) {

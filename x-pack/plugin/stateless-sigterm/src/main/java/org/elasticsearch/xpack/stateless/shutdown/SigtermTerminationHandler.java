@@ -65,9 +65,8 @@ import static org.elasticsearch.core.TimeValue.timeValueMillis;
  * for this node and periodically checking the Get Shutdown Status API for this node until it's done.
  * <p>
  * If a {@link ShortShutdownMarker} is enabled, the grace period of the first Put Shutdown request is the short grace period, because a
- * short shutdown is the case that must not be missed. The control plane writes the marker file when the shutdown is short, but there is no
- * fixed order between the sigterm and the file. When the file does not exist after a delay, the shutdown is assumed to be long and a second
- * Put Shutdown request extends the grace period to the timeout.
+ * short shutdown is the case that must not be missed. When the marker file does not exist after a delay, the shutdown is assumed to be long
+ * and a second Put Shutdown request extends the grace period to the timeout.
  */
 public class SigtermTerminationHandler implements TerminationHandler {
     private static final Logger logger = LogManager.getLogger(SigtermTerminationHandler.class);
@@ -196,7 +195,7 @@ public class SigtermTerminationHandler implements TerminationHandler {
     }
 
     /**
-     * Checks for the marker file once after {@link #markerCheckDelay}. The marker may be written after the sigterm arrived.
+     * Checks for the marker file once after {@link #markerCheckDelay}, as the marker may be written after the sigterm arrived.
      */
     private void scheduleMarkerCheck(CountDownLatch latch, AtomicReference<Scheduler.ScheduledCancellable> markerCheck) {
         markerCheck.set(threadPool.schedule(() -> maybeExtendGracePeriod(latch), markerCheckDelay, threadPool.generic()));
@@ -228,7 +227,6 @@ public class SigtermTerminationHandler implements TerminationHandler {
         client.execute(PutShutdownNodeAction.INSTANCE, shutdownRequest(timeout), ActionListener.wrap(res -> {
             logger.info("extended shutdown grace period from [{}] to [{}]", shortGracePeriod, timeout);
         }, ex -> {
-            // if the node closes while the request is in flight, the shutdown is over and the failure is expected
             if (ex instanceof NodeClosedException) {
                 logger.debug("failed to extend shutdown grace period, node is closing", ex);
             } else {
@@ -238,8 +236,7 @@ public class SigtermTerminationHandler implements TerminationHandler {
     }
 
     /**
-     * A marker that cannot be read is treated as missing. The shutdown then has the long grace period, which is what happens without a
-     * marker, and the failure must not abort the handling of the sigterm.
+     * A marker that cannot be read is treated as missing, so the node keeps the long grace period rather than failing the sigterm handling.
      */
     private boolean markerExists() {
         try {

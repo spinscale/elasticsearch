@@ -124,7 +124,6 @@ public class SigtermShutdownCleanupService implements ClusterStateListener {
                         shutdown.getGracePeriod()
                     );
                     scheduledCleanup.cancel();
-                    // If the entry was concurrently replaced, for example by an in-flight cleanup, leave it alone.
                     if (cleanups.remove(node, scheduledCleanup) == false) {
                         continue;
                     }

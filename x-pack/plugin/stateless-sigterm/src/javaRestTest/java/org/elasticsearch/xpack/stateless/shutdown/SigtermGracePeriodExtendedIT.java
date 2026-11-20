@@ -47,8 +47,7 @@ public class SigtermGracePeriodExtendedIT extends AbstractSigtermGracePeriodTest
 
         var stopThread = stopSearchNodeInBackground();
         try {
-            // The shutdown record is created with the short grace period, which is extended once the check for the marker file is due.
-            // The extension must not restart the shutdown, so the start time stays the same.
+            // The extension must not restart the shutdown, so the start time stays the same
             var startedAtMillis = new AtomicReference<Number>();
             assertBusy(() -> {
                 var record = shutdownRecord(nodeId);

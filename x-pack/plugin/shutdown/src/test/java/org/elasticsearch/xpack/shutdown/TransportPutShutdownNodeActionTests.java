@@ -191,12 +191,10 @@ public class TransportPutShutdownNodeActionTests extends ESTestCase {
         state = executePutShutdown(state, sigtermRequest(shortGracePeriod));
         assertThat(state.metadata().nodeShutdowns().get("node1").getGracePeriod(), equalTo(shortGracePeriod));
 
-        // the same request again is a no-op
         clearTaskQueueInvocations();
         action.masterOperation(null, sigtermRequest(shortGracePeriod), state, ActionListener.noop());
         verifyNoInteractions(taskQueue);
 
-        // a request that only changes the grace period is not a no-op
         action.masterOperation(null, sigtermRequest(longGracePeriod), state, ActionListener.noop());
         verify(taskQueue).submitTask(any(), any(PutShutdownNodeTask.class), any());
 
@@ -226,7 +224,6 @@ public class TransportPutShutdownNodeActionTests extends ESTestCase {
         var startedAtMillis = System.currentTimeMillis() - TimeValue.timeValueHours(2).millis();
         // the node restarted since the shutdown record was written, so the record belongs to the previous node instance
         var existing = shutdownMetadata(Type.SIGTERM, "eph-previous-node1", shortGracePeriod, startedAtMillis);
-
         var state = executePutShutdown(stateWithNode(existing), sigtermRequest(longGracePeriod));
 
         var updated = state.metadata().nodeShutdowns().get("node1");
